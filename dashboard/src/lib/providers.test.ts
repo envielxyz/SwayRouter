@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_PROVIDER_CATALOG } from "./provider-catalog";
 import { getProviderIconSrc } from "./provider-icon";
-import { resolveAuthFlow } from "./providers";
+import { authModeLabels, resolveAuthFlow } from "./providers";
 
 describe("provider auth flow resolution", () => {
   test("uses Claude's PKCE OAuth flow instead of import", () => {
@@ -21,6 +21,11 @@ describe("provider auth flow resolution", () => {
 
   test("keeps Cursor on import flow", () => {
     expect(resolveAuthFlow("cursor", "import")).toBe("import");
+  });
+
+  test("labels CodeBuddy token auth as Access Token", () => {
+    expect(authModeLabels("device", false, ["device", "import"], "codebuddy-cn"))
+      .toEqual(["Device", "Access Token"]);
   });
 
   test("uses the Sway Router mark for Agent Router", () => {

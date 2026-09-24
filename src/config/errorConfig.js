@@ -47,6 +47,19 @@ export const ERROR_TIERS = {
   T3: "T3",
 };
 
+// These statuses describe the request rather than the account or upstream
+// capacity. Retrying them against another account/model only repeats the same
+// invalid request and can hide the useful provider error from the caller.
+export const NON_RETRYABLE_REQUEST_STATUSES = new Set([400, 405, 413, 415, 422]);
+
+export function isNonRetryableRequestStatus(status) {
+  return NON_RETRYABLE_REQUEST_STATUSES.has(Number(status));
+}
+
+export function isCancellationStatus(status) {
+  return Number(status) === 499;
+}
+
 const T1_BACKOFF_BASE = 30 * 1000;
 const T1_BACKOFF_CAP = 5 * 60 * 1000;
 
@@ -85,6 +98,14 @@ export function classifyError(status, errorText, retryCount = 0, opts = {}) {
     ? (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase()
     : "";
   const rng = typeof opts.rng === "function" ? opts.rng : null;
+
+  if (isNonRetryableRequestStatus(status) || isCancellationStatus(status)) {
+    return {
+      tier: ERROR_TIERS.T3,
+      action: "final",
+      cooldownMs: 0,
+    };
+  }
 
   const t1Texts = ["rate limit", "too many requests", "quota exceeded", "capacity", "overloaded"];
   if (t1Texts.some((t) => lowerError.includes(t)) || Number(status) === 429) {

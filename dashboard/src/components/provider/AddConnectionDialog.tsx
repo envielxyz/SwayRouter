@@ -165,7 +165,7 @@ export function AddConnectionDialog({
     if (mode === "device") return "Device Code";
     if (mode === "import") {
       return providerId === "codebuddy-cn" || providerId === "codebuddy-intl"
-        ? "AT/RT"
+        ? "Access Token"
         : "Import Token";
     }
     return mode;

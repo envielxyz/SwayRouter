@@ -169,6 +169,7 @@ export async function POST(request) {
     const supportsApiKeyMode = !!AI_PROVIDERS[provider]?.authModes?.includes("apikey");
     const isValidProvider = APIKEY_PROVIDERS[provider] ||
       supportsApiKeyMode ||
+      CODEBUDDY_TOKEN_PROVIDERS.has(provider) ||
       isWebCookieProvider ||
       isOpenAICompatibleProvider(provider) ||
       isAnthropicCompatibleProvider(provider) ||

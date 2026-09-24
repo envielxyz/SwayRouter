@@ -2,9 +2,12 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import {
   classifyError,
   ERROR_TIERS,
+  isCancellationStatus,
+  isNonRetryableRequestStatus,
   isDeprioitized,
 } from "@/config/errorConfig.js";
 import {
+  checkFallbackError,
   isModelLockActive,
   buildModelLockUpdate,
   getModelLockKey,
@@ -71,7 +74,7 @@ describe("A4.2 classifyError — 3-tier T1/T2/T3", () => {
     expect(rZero.cooldownMs).toBe(30 * 1000);
   });
 
-  test("T2: 5xx / network / 400 → retry-same action with short cooldown", () => {
+  test("T2: 5xx / network → retry-same action with short cooldown", () => {
     const r500 = classifyError(500, "internal server error", 0);
     expect(r500.tier).toBe(ERROR_TIERS.T2);
     expect(r500.action).toBe("retry-same");
@@ -83,6 +86,24 @@ describe("A4.2 classifyError — 3-tier T1/T2/T3", () => {
 
     const rUnknown = classifyError(0, "ECONNRESET", 0);
     expect(rUnknown.tier).toBe(ERROR_TIERS.T2);
+  });
+
+  test("non-retryable request statuses stop fallback without cooling down an account", () => {
+    for (const status of [400, 405, 413, 415, 422]) {
+      const result = classifyError(status, "invalid request", 0);
+      expect(isNonRetryableRequestStatus(status)).toBe(true);
+      expect(result.tier).toBe(ERROR_TIERS.T3);
+      expect(result.action).toBe("final");
+      expect(result.cooldownMs).toBe(0);
+
+      const fallback = checkFallbackError(status, "invalid request");
+      expect(fallback.shouldFallback).toBe(false);
+      expect(fallback.cooldownMs).toBe(0);
+    }
+
+    expect(isCancellationStatus(499)).toBe(true);
+    expect(classifyError(499, "Request aborted").action).toBe("final");
+    expect(checkFallbackError(499, "Request aborted").shouldFallback).toBe(false);
   });
 
   test("T3: 401/403/404 + permanent text → deprioritize action + deprioitizeUntil window", () => {
