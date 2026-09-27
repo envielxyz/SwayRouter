@@ -13,6 +13,9 @@ describe("runtime environment", () => {
     expect(config.usageHistoryRetentionDays).toBe(7);
     expect(config.usageHistoryMaxRows).toBe(500_000);
     expect(config.upstreamMaxAttempts).toBe(8);
+    expect(config.upstreamAttemptTimeoutMs).toBe(15_000);
+    expect(config.upstreamDeadlineMs).toBe(45_000);
+    expect(config.maxAccountAttempts).toBe(3);
   });
 
   test("loads bounded history and upstream retry overrides", () => {
@@ -21,10 +24,16 @@ describe("runtime environment", () => {
       SWAY_USAGE_RETENTION_DAYS: "30",
       SWAY_USAGE_HISTORY_MAX_ROWS: "1200000",
       SWAY_UPSTREAM_MAX_ATTEMPTS: "4",
+      SWAY_UPSTREAM_ATTEMPT_TIMEOUT_MS: "12000",
+      SWAY_UPSTREAM_DEADLINE_MS: "40000",
+      SWAY_MAX_ACCOUNT_ATTEMPTS: "2",
     });
     expect(config.usageHistoryRetentionDays).toBe(30);
     expect(config.usageHistoryMaxRows).toBe(1_200_000);
     expect(config.upstreamMaxAttempts).toBe(4);
+    expect(config.upstreamAttemptTimeoutMs).toBe(12_000);
+    expect(config.upstreamDeadlineMs).toBe(40_000);
+    expect(config.maxAccountAttempts).toBe(2);
   });
 
   test("derives an SSE-friendly queue wait from the selected resource profile", () => {

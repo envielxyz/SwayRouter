@@ -7,6 +7,7 @@ import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
+import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
 
 function sanitizeFunctionName(name) {
   if (!name) return "_unknown";
@@ -186,15 +187,24 @@ export class AntigravityExecutor extends BaseExecutor {
         return true;
       });
 
-      const needsBackfill = parts?.some(p => p.functionCall && !p.thoughtSignature) ?? false;
+      let firstFunctionCallSeen = false;
+      const modifiedParts = parts?.map(p => {
+        if (!p.functionCall) return p;
+        const callId = p.functionCall.id;
+        const cachedSig = callId
+          ? getGeminiThoughtSignatureSync(callId, sessionId, body.model || model)
+          : null;
+        const callSig = p.thoughtSignature
+          || cachedSig
+          || (!firstFunctionCallSeen ? DEFAULT_THINKING_AG_SIGNATURE : undefined);
+        firstFunctionCallSeen = true;
+        return callSig ? { ...p, thoughtSignature: callSig } : p;
+      });
+      const needsBackfill = modifiedParts?.some((p, index) => p !== parts[index]) ?? false;
       if (role !== c.role || parts?.length !== c.parts?.length || needsBackfill) {
         return {
           ...c, role,
-          parts: needsBackfill
-            ? parts.map(p => (p.functionCall && !p.thoughtSignature)
-                ? { ...p, thoughtSignature: DEFAULT_THINKING_AG_SIGNATURE }
-                : p)
-            : parts,
+          parts: modifiedParts || parts,
         };
       }
       return c;
@@ -241,6 +251,7 @@ export class AntigravityExecutor extends BaseExecutor {
     };
 
     stripBlacklisted(body);
+    delete body.requestType;
 
     this._lastSessionId = transformedRequest.sessionId;
 
@@ -249,7 +260,6 @@ export class AntigravityExecutor extends BaseExecutor {
       project: projectId,
       model: body.model || model,
       userAgent: "antigravity",
-      requestType: "agent",
       requestId: buildIdeRequestId({ body, request: transformedRequest, credentials, model, requestType: "agent" }),
       request: transformedRequest
     };

@@ -5,6 +5,7 @@ import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { env } from "@/lib/env";
+import { createUpstreamAttemptSignal } from "../utils/upstreamTimeout.js";
 
 export function waitForRetry(delayMs, signal) {
   if (!delayMs || delayMs <= 0) {
@@ -124,7 +125,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestTag = "", attemptReason = "initial", maxTotalAttempts = env.upstreamMaxAttempts }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestTag = "", attemptReason = "initial", maxTotalAttempts = env.upstreamMaxAttempts, attemptTimeoutMs = env.upstreamAttemptTimeoutMs, deadlineAt = null }) {
     const fallbackCount = this.getFallbackCount();
     const totalAttemptLimit = Math.max(1, Number(maxTotalAttempts) || env.upstreamMaxAttempts || 8);
     let attempt = 0;
@@ -157,10 +158,12 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
-      const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
-      const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
-      const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+      const configuredTimeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+      const attemptControl = createUpstreamAttemptSignal({
+        signal,
+        timeoutMs: Math.min(configuredTimeoutMs, attemptTimeoutMs || env.upstreamAttemptTimeoutMs),
+        deadlineAt,
+      });
 
       try {
         attempt++;
@@ -170,14 +173,13 @@ export class BaseExecutor {
         let upstreamHost = url;
         try { upstreamHost = new URL(url).host || url; } catch {                                      }
         log?.line?.(requestTag, "FETCH", `${this.provider.toUpperCase()} → ${upstreamHost} · ${attemptMeta}`);
-        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms | ${attemptMeta}`);
+        dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | attemptTimeout=${attemptControl.timeoutMs}ms | ${attemptMeta}`);
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
           body: bodyStr,
-          signal: mergedSignal
+          signal: attemptControl.signal
         }, proxyOptions);
-        clearTimeout(connectTimer);
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         const responseLabel = response.status >= 400 ? "ERROR" : "RESPONSE";
@@ -199,14 +201,13 @@ export class BaseExecutor {
 
         return { response, url, headers, transformedBody };
       } catch (error) {
-        clearTimeout(connectTimer);
+        if (attemptControl.wasTimeout()) throw attemptControl.timeoutError;
 
         if (signal?.aborted) throw signal.reason || error;
         lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
-        dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
+        dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}`);
 
-        if (error.name === "AbortError" && !isConnectTimeout) throw error;
+        if (error.name === "AbortError") throw error;
 
         if (await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${error.message}"`)) { urlIndex--; continue; }
 
@@ -215,6 +216,8 @@ export class BaseExecutor {
           continue;
         }
         throw error;
+      } finally {
+        attemptControl.cleanup();
       }
     }
 

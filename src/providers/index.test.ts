@@ -95,6 +95,15 @@ describe("registry", () => {
     ]);
   });
 
+  test("CodeBuddy Intl usage uses the v2 billing endpoint", () => {
+    const codeBuddyIntl = REGISTRY.find((entry) => entry.id === "codebuddy-intl") as {
+      transport?: { usage?: { url?: string } };
+    } | undefined;
+    expect(codeBuddyIntl?.transport?.usage?.url).toBe(
+      "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
+    );
+  });
+
   test("CodeBuddy CN exposes the tested CN model catalog", () => {
     const codeBuddyCn = REGISTRY.find((entry) => entry.id === "codebuddy-cn") as {
       models?: Array<{ id?: string }>;

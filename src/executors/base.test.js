@@ -14,6 +14,7 @@ afterEach(() => {
 });
 
 const { BaseExecutor, waitForRetry } = await import("./base.js");
+const { isUpstreamTimeoutError } = await import("../utils/upstreamTimeout.js");
 
 function response(status) {
   return new Response(JSON.stringify({ error: { message: `status ${status}` } }), {
@@ -109,6 +110,38 @@ describe("BaseExecutor retry and cancellation", () => {
 
     expect(result.response.status).toBe(500);
     expect(calls).toBe(2);
+    delete globalThis.__baseExecutorFetch;
+  });
+
+  test("aborts a stalled upstream attempt at the configured timeout", async () => {
+    globalThis.__baseExecutorFetch = (_url, { signal }) => new Promise((_resolve, reject) => {
+      if (signal.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+
+    const executor = new BaseExecutor("test", {
+      baseUrl: "https://provider.test/chat",
+      retry: { 502: { attempts: 0, delayMs: 0 } },
+    });
+
+    let error;
+    try {
+      await executor.execute({
+        model: "test-model",
+        body: { model: "test-model" },
+        stream: false,
+        credentials: {},
+        attemptTimeoutMs: 10,
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(isUpstreamTimeoutError(error)).toBe(true);
+    expect(error.kind).toBe("attempt");
     delete globalThis.__baseExecutorFetch;
   });
 });

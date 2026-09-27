@@ -6,6 +6,7 @@ import { toOpenAIUsage } from "../concerns/usage.js";
 import { reasoningDelta } from "../concerns/reasoning.js";
 import { encodeDataUri } from "../concerns/image.js";
 import { toOpenAIFinish } from "../concerns/finishReason.js";
+import { rememberGeminiThoughtSignature } from "../../services/thoughtSignatureStore.js";
 
 function chunkMeta(state) {
   return { id: `chatcmpl-${state.messageId}`, created: Math.floor(Date.now() / 1000), model: state.model };
@@ -50,6 +51,21 @@ export function geminiToOpenAIResponse(chunk, state) {
     for (const part of content.parts) {
       const hasThoughtSig = part.thoughtSignature || part.thought_signature;
       const isThought = part.thought === true;
+
+      if (
+        state.provider === "antigravity"
+        && state.sessionId
+        && (state.signatureModel || state.model)
+        && part.functionCall?.id
+        && hasThoughtSig
+      ) {
+        rememberGeminiThoughtSignature(
+          part.functionCall.id,
+          state.sessionId,
+          state.signatureModel || state.model,
+          hasThoughtSig,
+        );
+      }
 
       if (hasThoughtSig) {
         const hasTextContent = part.text !== undefined && part.text !== "";

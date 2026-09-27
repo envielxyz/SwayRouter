@@ -39,6 +39,9 @@ export interface EnvConfig {
   usageHistoryMaxRows: number;
 
   upstreamMaxAttempts: number;
+  upstreamAttemptTimeoutMs: number;
+  upstreamDeadlineMs: number;
+  maxAccountAttempts: number;
 }
 
 const DEFAULT_PASSWORD = "123456";
@@ -159,6 +162,21 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     upstreamMaxAttempts: parsePositiveInt(
       source.SWAY_UPSTREAM_MAX_ATTEMPTS,
       nodeEnv === "production" ? resource.upstreamMaxAttempts : 8,
+      100,
+    ),
+    upstreamAttemptTimeoutMs: parsePositiveInt(
+      source.SWAY_UPSTREAM_ATTEMPT_TIMEOUT_MS,
+      15_000,
+      10 * 60 * 1000,
+    ),
+    upstreamDeadlineMs: parsePositiveInt(
+      source.SWAY_UPSTREAM_DEADLINE_MS,
+      45_000,
+      10 * 60 * 1000,
+    ),
+    maxAccountAttempts: parsePositiveInt(
+      source.SWAY_MAX_ACCOUNT_ATTEMPTS,
+      3,
       100,
     ),
   });

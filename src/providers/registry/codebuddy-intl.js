@@ -38,7 +38,7 @@ export default {
     },
 
     usage: {
-      url: "https://www.codebuddy.ai/billing/meter/get-user-resource",
+      url: "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
     },
   },
 

@@ -15,6 +15,8 @@ import {
   QODER_MODEL_MAP,
 } from "../shared/qoder/constants.js";
 import { getQoderModelConfig, resolveQoderModels, isQoderPat, resolveQoderCredentials } from "../services/qoderModels.js";
+import { createUpstreamAttemptSignal } from "../utils/upstreamTimeout.js";
+import { env } from "@/lib/env";
 
 function normalizeMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -305,7 +307,7 @@ export class QoderExecutor extends BaseExecutor {
     return QODER_CHAT_URL_ENCODED;
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, attemptTimeoutMs = env.upstreamAttemptTimeoutMs, deadlineAt = null }) {
 
     const rawToken = credentials?.apiKey || credentials?.accessToken;
     if (isQoderPat(rawToken)) {
@@ -390,20 +392,25 @@ export class QoderExecutor extends BaseExecutor {
       ...cosyHeaders,
     };
 
-    const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
-    const connectCtrl = new AbortController();
-    const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
-    const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
+    const configuredTimeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+    const attemptControl = createUpstreamAttemptSignal({
+      signal,
+      timeoutMs: Math.min(configuredTimeoutMs, attemptTimeoutMs || env.upstreamAttemptTimeoutMs),
+      deadlineAt,
+    });
 
     let response;
     try {
       response = await proxyAwareFetch(
         url,
-        { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
+        { method: "POST", headers, body: encodedBodyBuf, signal: attemptControl.signal },
         proxyOptions,
       );
+    } catch (error) {
+      if (attemptControl.wasTimeout()) throw attemptControl.timeoutError;
+      throw error;
     } finally {
-      clearTimeout(connectTimer);
+      attemptControl.cleanup();
     }
 
     if (!response.ok) {

@@ -243,6 +243,7 @@ export async function handleChat(request, clientRawRequest = null) {
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, preferredConnectionId = null, requestSignal = null) {
   requestSignal ||= request?.signal || null;
   if (requestSignal?.aborted) return errorResponse(499, "Request aborted");
+  const deadlineAt = Date.now() + env.upstreamDeadlineMs;
   const incomingClient = clientRawRequest?.headers
     ? Object.fromEntries(clientRawRequest.headers.entries?.() || [])
     : {};
@@ -315,8 +316,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const cacheKey = extractCacheKey(body);
   let retryCount = 0;
+  let accountAttempts = 0;
 
-  while (true) {
+  while (accountAttempts < env.maxAccountAttempts) {
+    if (Date.now() >= deadlineAt) {
+      return errorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, "Sway Router upstream deadline exceeded");
+    }
+
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       cacheKey,
       preferredConnectionId,
@@ -350,6 +356,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       );
     }
 
+    accountAttempts += 1;
     const releaseAccountSlot = credentials.releaseAccountSlot;
     let result;
     try {
@@ -383,6 +390,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ponytailLevel: chatSettings.ponytailLevel || "full",
         providerThinking,
         requestSignal,
+        deadlineAt,
 
         sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
         onCredentialsRefreshed: async (newCreds) => {
@@ -410,6 +418,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return result.response;
     }
 
+    if (Date.now() >= deadlineAt) {
+      return result.response.status === HTTP_STATUS.GATEWAY_TIMEOUT
+        ? result.response
+        : errorResponse(HTTP_STATUS.GATEWAY_TIMEOUT, "Sway Router upstream deadline exceeded");
+    }
+
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, { retryCount });
 
     if (shouldFallback) {
@@ -418,9 +432,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       lastError = result.error;
       lastStatus = result.status;
       retryCount += 1;
+      if (accountAttempts >= env.maxAccountAttempts) {
+        log.warn("FALLBACK", `[${provider}/${model}] account attempt limit reached (${env.maxAccountAttempts})`);
+        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Provider account fallback limit reached; retry shortly");
+      }
       continue;
     }
 
     return result.response;
   }
+
+  return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Provider account fallback limit reached; retry shortly");
 }

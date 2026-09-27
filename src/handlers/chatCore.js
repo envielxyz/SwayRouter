@@ -33,6 +33,8 @@ import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { normalizeTranslationRequest, resolveTranslationSurface, unsupportedFeatures } from "../translator/canonical.js";
+import { executeWithAttemptDeadline, isUpstreamTimeoutError } from "../utils/upstreamTimeout.js";
+import { env } from "@/lib/env";
 
 export function stripContinuityFields(body) {
   if (!body || !Array.isArray(body.messages)) return body;
@@ -45,7 +47,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, requestSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, requestSignal, deadlineAt = null }) {
   const { provider, model, modelCapabilities } = modelInfo;
   const requestStartTime = Date.now();
   let failureRecorded = false;
@@ -315,6 +317,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     signal: streamController.signal, log, proxyOptions,
     requestTag: reqTag,
     attemptReason: "initial",
+    attemptTimeoutMs: env.upstreamAttemptTimeoutMs,
+    deadlineAt,
   };
   trackPendingRequest(model, provider, connectionId, true);
   appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
@@ -352,7 +356,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   let providerResponseFormat = targetFormat;
   try {
-    const result = await executor.execute(executeOptions);
+    const result = await executeWithAttemptDeadline(
+      (signal) => executor.execute({ ...executeOptions, signal }),
+      { signal: executeOptions.signal, timeoutMs: env.upstreamAttemptTimeoutMs, deadlineAt },
+    );
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
@@ -361,19 +368,24 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    const failedStatus = recordFailure(error.message || String(error), error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
+    const timeout = isUpstreamTimeoutError(error);
+    const failedStatus = recordFailure(error.message || String(error), timeout ? HTTP_STATUS.GATEWAY_TIMEOUT : error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY);
+    appendRequestLog({ model, provider, connectionId, status: `FAILED ${timeout ? HTTP_STATUS.GATEWAY_TIMEOUT : error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: extractRequestConfig(body, stream),
       providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
+      response: { error: error.message || String(error), status: timeout ? HTTP_STATUS.GATEWAY_TIMEOUT : error.name === "AbortError" ? 499 : 502, thinking: null },
       status: "error",
       client: { id: clientMeta.id, confidence: clientMeta.confidence, signals: clientMeta.signals, conflicts: clientMeta.conflicts }
     }), clientRawRequest).catch(() => { });
 
+    if (timeout) {
+      streamController.handleError(error);
+      return createErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, "Upstream request timed out");
+    }
     if (error.name === "AbortError") {
       streamController.handleError(error);
       return createErrorResult(499, "Request aborted");
@@ -403,7 +415,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
         try {
-          const retryResult = await executor.execute({ ...executeOptions, attemptReason: "oauth-refresh" });
+          const retryResult = await executeWithAttemptDeadline(
+            (signal) => executor.execute({ ...executeOptions, signal, attemptReason: "oauth-refresh" }),
+            { signal: executeOptions.signal, timeoutMs: env.upstreamAttemptTimeoutMs, deadlineAt },
+          );
           if (retryResult.response.ok) {
             providerResponse = retryResult.response;
             providerUrl = retryResult.url;
@@ -448,6 +463,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
               reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
             }
           } catch (e) {
+            if (isUpstreamTimeoutError(e)) throw e;
             if (log?.warn) log.warn("A4.4", `retry after strip "${rejectedField}" threw: ${e?.message || e}`);
           }
         } else if (apply.retryable && !apply.removed) {
@@ -517,10 +533,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       }
       log?.line?.(reqTag, "RETRY", `A4.3 pre-content socket close · ${provider}/${model}`);
       try {
-        const retryResp = await executor.execute({
-          ...executeOptions,
-          attemptReason: "stream-preview-network",
-        });
+        const retryResp = await executeWithAttemptDeadline(
+          (signal) => executor.execute({
+            ...executeOptions,
+            signal,
+            attemptReason: "stream-preview-network",
+          }),
+          { signal: executeOptions.signal, timeoutMs: env.upstreamAttemptTimeoutMs, deadlineAt },
+        );
         if (retryResp?.response?.ok) {
           providerResponse = retryResp.response;
           providerUrl = retryResp.url;
@@ -541,6 +561,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           );
         }
       } catch (error) {
+        if (isUpstreamTimeoutError(error)) {
+          recordFailure(error?.message || String(error), HTTP_STATUS.GATEWAY_TIMEOUT);
+          return createErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, "Upstream request timed out");
+        }
         if (requestSignal?.aborted || error?.name === "AbortError") {
           recordFailure("Request aborted", 499);
           return createErrorResult(499, "Request aborted");
@@ -578,10 +602,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           recordFailure("Request aborted", 499);
           return createErrorResult(499, "Request aborted");
         }
-        const retryResp = await executor.execute({
-          ...executeOptions,
-          attemptReason: "stream-preview",
-        });
+        const retryResp = await executeWithAttemptDeadline(
+          (signal) => executor.execute({
+            ...executeOptions,
+            signal,
+            attemptReason: "stream-preview",
+          }),
+          { signal: executeOptions.signal, timeoutMs: env.upstreamAttemptTimeoutMs, deadlineAt },
+        );
         if (retryResp?.response?.ok) {
           providerResponse = retryResp.response;
           providerUrl = retryResp.url;
@@ -604,8 +632,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       } catch (e) {
         log?.warn?.("A4.3", `retry threw: ${e?.message || e}`);
 
-        recordFailure(e?.message || String(e), HTTP_STATUS.BAD_GATEWAY);
-        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, formatProviderError(e, provider, model, HTTP_STATUS.BAD_GATEWAY));
+        const status = isUpstreamTimeoutError(e) ? HTTP_STATUS.GATEWAY_TIMEOUT : HTTP_STATUS.BAD_GATEWAY;
+        recordFailure(e?.message || String(e), status);
+        return createErrorResult(status, isUpstreamTimeoutError(e) ? "Upstream request timed out" : formatProviderError(e, provider, model, status));
       }
     } else if (preview && (preview.kind === "committed" || preview.kind === "timeout" || preview.kind === "streamClosed")) {
 
