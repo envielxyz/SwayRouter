@@ -3,6 +3,7 @@ import {
   classifyError,
   ERROR_TIERS,
   isCancellationStatus,
+  isQuotaExhaustionError,
   isNonRetryableRequestStatus,
   isDeprioitized,
 } from "@/config/errorConfig.js";
@@ -74,6 +75,18 @@ describe("A4.2 classifyError — 3-tier T1/T2/T3", () => {
     expect(rZero.cooldownMs).toBe(30 * 1000);
   });
 
+  test("quota exhaustion in a 400 response still falls back", () => {
+    expect(isQuotaExhaustionError("You exceeded your current quota")).toBe(true);
+
+    const classified = classifyError(400, "You exceeded your current quota", 0);
+    expect(classified.tier).toBe(ERROR_TIERS.T1);
+    expect(classified.action).toBe("cooldown");
+
+    const fallback = checkFallbackError(400, "You exceeded your current quota");
+    expect(fallback.shouldFallback).toBe(true);
+    expect(fallback.cooldownMs).toBeGreaterThan(0);
+  });
+
   test("T2: 5xx / network → retry-same action with short cooldown", () => {
     const r500 = classifyError(500, "internal server error", 0);
     expect(r500.tier).toBe(ERROR_TIERS.T2);
@@ -114,9 +127,13 @@ describe("A4.2 classifyError — 3-tier T1/T2/T3", () => {
 
     expect(r401.deprioitizeUntil! - now()).toBeGreaterThan(r401.cooldownMs);
 
-    const r403 = classifyError(403, "insufficient_quota", 0);
+    const r403 = classifyError(403, "forbidden", 0);
     expect(r403.tier).toBe(ERROR_TIERS.T3);
     expect(r403.action).toBe("deprioritize");
+
+    const quota403 = classifyError(403, "insufficient_quota", 0);
+    expect(quota403.tier).toBe(ERROR_TIERS.T1);
+    expect(quota403.action).toBe("cooldown");
 
     const rt = classifyError(0, "no credentials available", 0);
     expect(rt.tier).toBe(ERROR_TIERS.T3);

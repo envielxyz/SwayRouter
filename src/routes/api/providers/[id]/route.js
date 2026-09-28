@@ -5,6 +5,7 @@ import {
   updateProviderConnection,
   deleteProviderConnection,
 } from "@/models";
+import { clearAllLocksForConnection } from "@/lib/db/repos/accountModelLocksRepo.js";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -118,7 +119,12 @@ export async function PUT(request, { params }) {
     if (priority !== undefined) updateData.priority = priority;
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;
     if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
-    if (isActive !== undefined) updateData.isActive = isActive;
+    if (isActive !== undefined) {
+      updateData.isActive = isActive;
+      if (isActive === true && existing.isActive === false) {
+        await clearAllLocksForConnection(id);
+      }
+    }
     if (apiKey && existing.authType === "apikey") {
       updateData.apiKey = typeof apiKey === "string" ? apiKey.trim() : apiKey;
     }

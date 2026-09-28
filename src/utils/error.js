@@ -45,7 +45,7 @@ export async function parseUpstreamError(response, executor = null) {
       if (parsed && typeof parsed === "object") {
         return {
           statusCode: parsed.status || response.status,
-          message: executor?.provider === "codebuddy-intl" && parsed.message
+          message: ["codebuddy-cn", "codebuddy-intl"].includes(executor?.provider) && parsed.message
             ? parsed.message
             : DEFAULT_ERROR_MESSAGES[response.status] || "Upstream provider request failed",
           resetsAtMs: parsed.resetsAtMs,

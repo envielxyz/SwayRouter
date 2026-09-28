@@ -7,7 +7,7 @@ import {
   isDeprioritized, sortWithDeprioritization, pickCacheAffine,
   DEPRIORITIZE_FIELD,
 } from "../../services/accountFallback.js";
-import { MAX_RATE_LIMIT_COOLDOWN_MS, classifyError, ERROR_TIERS } from "../../config/errorConfig.js";
+import { MAX_RATE_LIMIT_COOLDOWN_MS, classifyError, ERROR_TIERS, isQuotaExhaustionError } from "../../config/errorConfig.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { recordLock, clearLock, clearAllLocksForConnection } from "@/lib/db/repos/accountModelLocksRepo.js";
 import { accountFallbackDecisionsTotal, cacheAffineSelectionsTotal } from "@/observability/metrics.js";
@@ -398,13 +398,18 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
-  const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
+  const providerId = resolveProviderId(provider);
+  const codeBuddyQuotaExhausted = ["codebuddy-cn", "codebuddy-intl"].includes(providerId)
+    && isQuotaExhaustionError(errorText);
+  const lockModel = githubResetAtMs || codeBuddyQuotaExhausted ? null : model;
+  const lockUpdate = buildModelLockUpdate(lockModel, cooldownMs);
 
   const deprioUpdate = deprioitizeUntilMs ? { [DEPRIORITIZE_FIELD]: deprioitizeUntilMs } : {};
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     ...deprioUpdate,
+    ...(codeBuddyQuotaExhausted ? { isActive: false } : {}),
     testStatus: "unavailable",
     lastError: reason,
     errorCode: status,
@@ -413,7 +418,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   });
   invalidateProviderAccountPool(provider);
 
-  await recordLock(connectionId, githubResetAtMs ? null : model, {
+  await recordLock(connectionId, lockModel, {
     tier, reason, expiresAt: new Date(Date.now() + cooldownMs).toISOString(),
   }).catch(() => {});
 

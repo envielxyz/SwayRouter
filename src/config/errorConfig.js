@@ -60,6 +60,20 @@ export function isCancellationStatus(status) {
   return Number(status) === 499;
 }
 
+const QUOTA_EXHAUSTION_PATTERNS = [
+  /\binsufficient[_\s-]+quota\b/i,
+  /\b(?:quota|resource)[\s_-]+(?:is[\s_-]+)?(?:exhausted|depleted)\b/i,
+  /\b(?:quota|resource)[\s_-]+(?:has[\s_-]+been[\s_-]+)?(?:exceeded|reached)\b/i,
+  /\b(?:exceeded|exhausted|depleted)\s+(?:(?:your|the)\s+)?(?:current\s+)?(?:quota|resource)\b/i,
+  /\b(?:daily|weekly|monthly)\s+(?:usage\s+)?(?:quota|limit)\s+(?:is\s+)?(?:exceeded|exhausted|reached)\b/i,
+  /\bno\s+(?:remaining\s+)?quota\b/i,
+];
+
+export function isQuotaExhaustionError(errorText) {
+  const text = typeof errorText === "string" ? errorText : JSON.stringify(errorText ?? "");
+  return QUOTA_EXHAUSTION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 const T1_BACKOFF_BASE = 30 * 1000;
 const T1_BACKOFF_CAP = 5 * 60 * 1000;
 
@@ -99,6 +113,14 @@ export function classifyError(status, errorText, retryCount = 0, opts = {}) {
     : "";
   const rng = typeof opts.rng === "function" ? opts.rng : null;
 
+  const quotaExhausted = isQuotaExhaustionError(lowerError);
+  if (quotaExhausted || Number(status) === 429) {
+    const exp = T1_BACKOFF_BASE * Math.pow(2, retryCount);
+    const base = Math.min(exp, T1_BACKOFF_CAP);
+    const jitter = rng ? Math.floor(rng() * base * JITTER_FRACTION) : 0;
+    return { tier: ERROR_TIERS.T1, action: "cooldown", cooldownMs: base + jitter };
+  }
+
   if (isNonRetryableRequestStatus(status) || isCancellationStatus(status)) {
     return {
       tier: ERROR_TIERS.T3,
@@ -108,7 +130,7 @@ export function classifyError(status, errorText, retryCount = 0, opts = {}) {
   }
 
   const t1Texts = ["rate limit", "too many requests", "quota exceeded", "capacity", "overloaded"];
-  if (t1Texts.some((t) => lowerError.includes(t)) || Number(status) === 429) {
+  if (t1Texts.some((t) => lowerError.includes(t))) {
     const exp = T1_BACKOFF_BASE * Math.pow(2, retryCount);
     const base = Math.min(exp, T1_BACKOFF_CAP);
     const jitter = rng ? Math.floor(rng() * base * JITTER_FRACTION) : 0;

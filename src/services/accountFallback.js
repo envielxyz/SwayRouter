@@ -7,6 +7,7 @@ import {
   isDeprioitized,
   isCancellationStatus,
   isNonRetryableRequestStatus,
+  isQuotaExhaustionError,
 } from "../config/errorConfig.js";
 
 import { fnv1a } from "@/lib/security/payloadCapture.js";
@@ -18,6 +19,11 @@ export function getQuotaCooldown(backoffLevel = 0) {
 }
 
 export function checkFallbackError(status, errorText, backoffLevel = 0) {
+  if (isQuotaExhaustionError(errorText)) {
+    const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
+    return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
+  }
+
   if (isNonRetryableRequestStatus(status) || isCancellationStatus(status)) {
     return { shouldFallback: false, cooldownMs: 0, action: "final", newBackoffLevel: backoffLevel };
   }
