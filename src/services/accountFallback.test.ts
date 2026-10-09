@@ -14,11 +14,17 @@ import {
   getModelLockKey,
   pickCacheAffine,
   extractCacheKey,
+  deriveCacheKey,
   sortWithDeprioritization,
   isDeprioritized,
   DEPRIORITIZE_FIELD,
   buildDeprioritizeUpdate,
 } from "./accountFallback.js";
+import { openaiResponsesToOpenAIRequest } from "@/translator/request/openai-responses.js";
+import { convertResponsesApiFormat } from "@/translator/formats/responsesApi.js";
+import { getProviderCredentials } from "@/sse/services/auth.js";
+import { createProviderConnection, deleteProviderConnection } from "@/lib/db/repos/connectionsRepo.js";
+import { updateSettings } from "@/lib/db/repos/settingsRepo.js";
 import {
   recordLock,
   clearLock,
@@ -238,6 +244,79 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
     const r = pickCacheAffine(conns, { cacheKey: "k", excludeIds: new Set(["a"]) });
     expect(r.connection).toBeNull();
   });
+
+  test("priority respected: a lower-priority account is never picked while a higher tier has capacity", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "free", priority: 1 },
+      { id: "paid", priority: 2 },
+    ];
+    // Sweep many keys: every one must land on the highest-priority tier ("free").
+    for (const cacheKey of ["k-0", "k-1", "k-2", "k-3", "k-4", "k-5", "k-6", "k-7"]) {
+      const r = pickCacheAffine(conns, { cacheKey });
+      expect(r.connection?.id).toBe("free");
+      expect(r.affinity).toBe("hit");
+    }
+  });
+
+  test("tier rotation: excluding the whole top tier rotates to the next tier", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "free", priority: 1 },
+      { id: "paid", priority: 2 },
+    ];
+    const r = pickCacheAffine(conns, { cacheKey: "any-key", excludeIds: new Set(["free"]) });
+    expect(r.connection?.id).toBe("paid");
+    expect(r.affinity).toBe("rotate");
+  });
+
+  test("same-tier spread still works: two same-priority accounts split different keys", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "s1", priority: 5 },
+      { id: "s2", priority: 5 },
+    ];
+    const picks = new Set<string | undefined>();
+    for (let i = 0; i < 64 && picks.size < 2; i++) {
+      picks.add(pickCacheAffine(conns, { cacheKey: `spread-key-${i}` }).connection?.id);
+    }
+    expect(picks.size).toBe(2);
+  });
+
+  test("determinism: repeated calls with the same key return the same id", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "free", priority: 1 },
+      { id: "paid", priority: 2 },
+      { id: "backup", priority: 3 },
+    ];
+    const first = pickCacheAffine(conns, { cacheKey: "determinism-key" });
+    for (let i = 0; i < 10; i++) {
+      const r = pickCacheAffine(conns, { cacheKey: "determinism-key" });
+      expect(r.connection?.id).toBe(first.connection?.id);
+      expect(r.affinity).toBe(first.affinity);
+    }
+  });
+
+  test("all excluded across multiple tiers → connection null", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "free", priority: 1 },
+      { id: "paid", priority: 2 },
+    ];
+    const r = pickCacheAffine(conns, { cacheKey: "k", excludeIds: new Set(["free", "paid"]) });
+    expect(r.connection).toBeNull();
+    expect(r.affinity).toBe("rotate");
+  });
+
+  test("cross-tier fallthrough: excluding the entire top tier picks from the next tier", () => {
+    const conns: Array<{ id: string; priority: number }> = [
+      { id: "t1a", priority: 1 },
+      { id: "t1b", priority: 1 },
+      { id: "t2a", priority: 2 },
+      { id: "t2b", priority: 2 },
+    ];
+    for (const cacheKey of ["x-1", "x-2", "x-3", "x-4", "x-5"]) {
+      const r = pickCacheAffine(conns, { cacheKey, excludeIds: new Set(["t1a", "t1b"]) });
+      expect(["t2a", "t2b"]).toContain(r.connection?.id);
+      expect(r.affinity).toBe("rotate");
+    }
+  });
 });
 
 describe("A4.2 extractCacheKey — format-agnostic", () => {
@@ -338,3 +417,123 @@ describe("A4.2 T3 deprioritization — sort + lift", () => {
     expect(buildDeprioritizeUpdate(0)).toEqual({ deprioritizeUntil: null });
   });
 });
+
+describe("A4.2 deriveCacheKey — session-aware, stable", () => {
+  test("explicit session header is stable across turns even as the prompt grows", () => {
+    const headers = { "x-session-id": "conv-abc-123" };
+    const turn1 = deriveCacheKey({ headers, body: { messages: [{ role: "user", content: "turn one" }] } });
+    const turn2 = deriveCacheKey({ headers, body: { messages: [{ role: "user", content: "turn one" }, { role: "user", content: "turn two" }] } });
+    expect(turn1).toBe(turn2);
+    expect(turn1).toContain("conv-abc-123");
+  });
+
+  test("body prompt_cache_key / conversation_id / Claude Code metadata.user_id are honored", () => {
+    const a = deriveCacheKey({ headers: {}, body: { prompt_cache_key: "pck-1", messages: [{ role: "user", content: "x" }] } });
+    const b = deriveCacheKey({ headers: {}, body: { conversation_id: "conv-9", messages: [{ role: "user", content: "y" }] } });
+    const c = deriveCacheKey({ headers: {}, body: { metadata: { user_id: "user_123_session_deadbeef" }, messages: [{ role: "user", content: "z" }] } });
+    expect(a).toContain("pck-1");
+    expect(b).toContain("conv-9");
+    expect(c).toContain("deadbeef");
+  });
+
+  test("falls back to prompt prefix when no explicit session identity exists", () => {
+    const key = deriveCacheKey({ headers: {}, body: { messages: [{ role: "system", content: "shared system prompt" }] } });
+    expect(key).toBe("shared system prompt");
+  });
+
+  test("does not use the random/derived session fallback as a cache key", () => {
+    const key1 = deriveCacheKey({ headers: {}, body: { messages: [{ role: "user", content: "same" }] }, connectionId: "conn-1" });
+    const key2 = deriveCacheKey({ headers: {}, body: { messages: [{ role: "user", content: "same" }] }, connectionId: "conn-2" });
+    expect(key1).toBe(key2);
+  });
+
+  test("is format-agnostic and bounded to <=256 chars", () => {
+    const gemini = deriveCacheKey({ headers: {}, body: { contents: [{ parts: [{ text: "gemini head" }] }] } });
+    expect(gemini).toBe("gemini head");
+    const long = deriveCacheKey({ headers: { "x-session-id": "s".repeat(400) }, body: { prompt: "p" } });
+    expect(long!.length).toBeLessThanOrEqual(256);
+  });
+
+  test("extractCacheKey remains backward compatible with a single argument", () => {
+    expect(extractCacheKey({ prompt: "legacy" })).toBe("legacy");
+  });
+
+  test("per-request x-client-request-id does not leak into the cache key; a real session id still wins", () => {
+    // Same per-request id, different bodies that share a prompt prefix → keys must be equal.
+    const headers = { "x-client-request-id": "req-abc-123" };
+    const k1 = deriveCacheKey({ headers, body: { messages: [{ role: "system", content: "shared prefix" }, { role: "user", content: "turn one" }] } });
+    const k2 = deriveCacheKey({ headers, body: { messages: [{ role: "system", content: "shared prefix" }, { role: "user", content: "turn two" }] } });
+    expect(k1).toBe(k2);
+    expect(k1).toBe("shared prefix");
+    expect(k1).not.toContain("req-abc-123");
+
+    // A real conversation id still wins over the (ignored) per-request id.
+    const withSession = deriveCacheKey({
+      headers: { "x-client-request-id": "req-abc-123", "x-session-id": "conv-stable-1" },
+      body: { messages: [{ role: "user", content: "hi" }] },
+    });
+    expect(withSession).toContain("conv-stable-1");
+    expect(withSession).not.toContain("req-abc-123");
+  });
+});
+
+describe("A4.2 responses translators — preserve client prompt_cache_key", () => {
+  test("openaiResponsesToOpenAIRequest keeps a client-supplied prompt_cache_key", () => {
+    const body = {
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      prompt_cache_key: "keep-me",
+    };
+    const out = openaiResponsesToOpenAIRequest("gpt-5", body, true, {});
+    expect(out.prompt_cache_key).toBe("keep-me");
+  });
+
+  test("convertResponsesApiFormat keeps a client-supplied prompt_cache_key", () => {
+    const body = {
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      prompt_cache_key: "keep-me-too",
+    };
+    const out = convertResponsesApiFormat(body);
+    expect(out.prompt_cache_key).toBe("keep-me-too");
+  });
+
+  test("absent prompt_cache_key is not synthesized by the translators", () => {
+    const body = {
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+    };
+    const out = openaiResponsesToOpenAIRequest("gpt-5", body, true, {});
+    expect("prompt_cache_key" in out).toBe(false);
+  });
+});
+
+describe("A4.2 cache-affine routing — never hard-blocks (integration)", () => {
+  test("sticky across calls; excluded primary rotates instead of blocking", async () => {
+    const provider = `cache-affine-test-${crypto.randomUUID()}`;
+    const createdIds: string[] = [];
+    try {
+      const a = await createProviderConnection({ provider, authType: "apikey", apiKey: `k-${crypto.randomUUID()}`, autoName: true });
+      const b = await createProviderConnection({ provider, authType: "apikey", apiKey: `k-${crypto.randomUUID()}`, autoName: true });
+      expect(a?.id).toBeString();
+      expect(b?.id).toBeString();
+      createdIds.push(a!.id as string, b!.id as string);
+
+      await updateSettings({ providerStrategies: { [provider]: { fallbackStrategy: "cache-affine" } } });
+
+      const opts = { cacheKey: "session:stable-conv" };
+      const first = await getProviderCredentials(provider, null, "test-model", opts);
+      expect(first).not.toBeNull();
+      const firstId = first?.connectionId;
+      expect(firstId).toBeString();
+
+      const second = await getProviderCredentials(provider, null, "test-model", opts);
+      expect(second?.connectionId).toBe(firstId);
+
+      const rotated = await getProviderCredentials(provider, new Set([firstId as string]), "test-model", opts);
+      expect(rotated).not.toBeNull();
+      expect(rotated?.connectionId).not.toBe(firstId);
+    } finally {
+      await updateSettings({ providerStrategies: {} });
+      for (const id of createdIds) await deleteProviderConnection(id);
+    }
+  });
+});
+

@@ -438,11 +438,15 @@ Sway Router can detect and configure these coding tools to use the gateway:
 
 ### Routing and fallbacks
 
-- `fill-first` for predictable account usage.
+- `cache-affine` is the default account-routing strategy: it keeps each
+  conversation on one account so provider prompt-cache reuse is maximized.
+- `fill-first` for predictable account usage. Switch back to it when strict
+  free-tier or priority-first consumption matters.
 - `round-robin` for simple rotation.
 - `least-inflight` for spreading active work.
-- `sticky` and `cache-affine` behavior when account stability matters.
-- Per-provider routing overrides and sticky controls.
+- `sticky` behavior when account stability matters.
+- Per-provider routing overrides (including switching a provider to
+  `fill-first`) and sticky controls.
 - Combos for ordered multi-model or multi-provider fallback.
 - Account cooldowns, locks, endpoint fallback, and bounded retries.
 

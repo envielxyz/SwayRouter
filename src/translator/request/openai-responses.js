@@ -209,7 +209,10 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   delete result.input;
   delete result.instructions;
   delete result.include;
-  delete result.prompt_cache_key;
+  // Preserve a client-supplied prompt_cache_key: it is the explicit conversation
+  // identity upstream caches on, so dropping it would guarantee cache misses.
+  // (An empty/absent value is dropped — never send an empty param upstream.)
+  if (!result.prompt_cache_key) delete result.prompt_cache_key;
   delete result.store;
   if (typeof result.reasoning?.effort === "string") {
     result.reasoning_effort = result.reasoning.effort;

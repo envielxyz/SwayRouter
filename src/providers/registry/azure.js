@@ -19,5 +19,6 @@ export default createRegistryEntry({
   transport: {
     baseUrl: "",
     headers: {},
+    quirks: { promptCacheKey: true },
   },
 });

@@ -40,6 +40,13 @@ function githubMonthlyResetMs(status, errorText, provider) {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 }
 
+/**
+ * @param {string} provider
+ * @param {Set<string>|string|null} [excludeConnectionIds]
+ * @param {string|null} [model]
+ * @param {{ cacheKey?: string|null, promptPrefix?: string|null, preferredConnectionId?: string|null, signal?: AbortSignal|null, [key: string]: unknown }} [options]
+ * @returns {Promise<Record<string, unknown>|null>}
+ */
 export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
 
   const excludeSet = excludeConnectionIds instanceof Set

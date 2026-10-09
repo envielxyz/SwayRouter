@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 
-export type RotationStrategy = "least-inflight" | "fill-first" | "round-robin";
+export type RotationStrategy = "least-inflight" | "fill-first" | "round-robin" | "cache-affine";
 
 export type AppSettings = {
 
@@ -70,13 +70,15 @@ export function getProviderStrategy(
   if (
     per === "least-inflight" ||
     per === "fill-first" ||
-    per === "round-robin"
+    per === "round-robin" ||
+    per === "cache-affine"
   ) return per;
   const global = settings?.fallbackStrategy;
   if (
     global === "least-inflight" ||
     global === "fill-first" ||
-    global === "round-robin"
+    global === "round-robin" ||
+    global === "cache-affine"
   ) {
     return global;
   }

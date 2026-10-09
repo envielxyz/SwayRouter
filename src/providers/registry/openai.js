@@ -28,7 +28,10 @@ export default {
   },
   "transport": {
     "baseUrl": "https://api.openai.com/v1/chat/completions",
-    "forceStream": true
+    "forceStream": true,
+    "quirks": {
+      "promptCacheKey": true
+    }
   },
   "models": [
     {

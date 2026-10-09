@@ -109,7 +109,9 @@ export function convertResponsesApiFormat(body) {
   delete result.input;
   delete result.instructions;
   delete result.include;
-  delete result.prompt_cache_key;
+  // Preserve a client-supplied prompt_cache_key (explicit conversation identity for
+  // upstream prompt caching); drop only when absent/empty.
+  if (!result.prompt_cache_key) delete result.prompt_cache_key;
   delete result.store;
   delete result.reasoning;
 

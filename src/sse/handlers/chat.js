@@ -7,7 +7,7 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { extractCacheKey } from "../../services/accountFallback.js";
+import { deriveCacheKey } from "../../services/accountFallback.js";
 import { getSettings, getProviderConnectionById } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "../../handlers/chatCore.js";
@@ -314,7 +314,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
 
-  const cacheKey = extractCacheKey(body);
+  const requestHeaders = clientRawRequest?.headers || Object.fromEntries(request.headers.entries());
+  const cacheKey = deriveCacheKey({
+    headers: requestHeaders,
+    body,
+    connectionId: preferredConnectionId || null,
+    scope: provider || "",
+  });
   let retryCount = 0;
   let accountAttempts = 0;
 

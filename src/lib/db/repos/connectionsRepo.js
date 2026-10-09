@@ -240,6 +240,10 @@ function normalizePriorities(db, providerId) {
   });
 }
 
+/**
+ * @param {Record<string, unknown>} data
+ * @returns {Promise<Record<string, unknown>|undefined>}
+ */
 export async function createProviderConnection(data) {
   const db = await getAdapter();
   const now = new Date().toISOString();

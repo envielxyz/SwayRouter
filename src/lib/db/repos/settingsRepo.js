@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   tunnelUrl: "",
   tunnelProvider: "cloudflare",
   stickyRoundRobinLimit: 1,
-  fallbackStrategy: "fill-first",
+  fallbackStrategy: "cache-affine",
   providerStrategies: {},
 
   accountPool: {
@@ -91,6 +91,35 @@ function mergeWithDefaults(raw) {
 
 const settingsCache = getConfigCache("settings", { ttlMs: 5000 });
 
+export const FALLBACK_STRATEGIES = ["fill-first", "round-robin", "least-inflight", "cache-affine"];
+
+// Validate routing strategies on WRITE only (the incoming patch). Reading an already
+// persisted legacy/unknown value must never throw. Mirrors the allowlist used by
+// validateDatabaseBackup (src/lib/db/index.js); backup import writes to the DB directly
+// and does not call updateSettings, so this cannot affect it.
+export function validateFallbackStrategies(updates) {
+  if (!updates || typeof updates !== "object" || Array.isArray(updates)) return;
+  const check = (value, label) => {
+    if (FALLBACK_STRATEGIES.includes(value)) return;
+    const error = new Error(
+      `Invalid fallbackStrategy "${String(value)}"${label}. Allowed: ${FALLBACK_STRATEGIES.join(", ")}`,
+    );
+    error.code = "INVALID_FALLBACK_STRATEGY";
+    throw error;
+  };
+  if (Object.prototype.hasOwnProperty.call(updates, "fallbackStrategy")) {
+    check(updates.fallbackStrategy, "");
+  }
+  const providerStrategies = updates.providerStrategies;
+  if (providerStrategies && typeof providerStrategies === "object" && !Array.isArray(providerStrategies)) {
+    for (const [providerId, strategy] of Object.entries(providerStrategies)) {
+      if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) continue;
+      if (!Object.prototype.hasOwnProperty.call(strategy, "fallbackStrategy")) continue;
+      check(strategy.fallbackStrategy, ` for provider "${providerId}"`);
+    }
+  }
+}
+
 export async function getSettings() {
   return await settingsCache.get("merged", async () => {
     const raw = await readRaw();
@@ -99,6 +128,7 @@ export async function getSettings() {
 }
 
 export async function updateSettings(updates) {
+  validateFallbackStrategies(updates);
   const db = await getAdapter();
   let next;
   db.transaction(function () {

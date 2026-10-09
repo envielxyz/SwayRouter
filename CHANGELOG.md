@@ -2,6 +2,13 @@
 
 All notable changes to Sway Router are documented here.
 
+## [Unreleased]
+
+- Default account-routing strategy is now `cache-affine`, keeping each conversation on one account for maximum provider prompt-cache reuse.
+- `cache-affine` is now priority-aware when selecting an account.
+- The `cache-affine` cache key is session-aware, pinning each conversation to one account.
+- Preserve and inject `prompt_cache_key` for OpenAI and Azure requests.
+
 ## [1.0.4] - 2026-09-19
 
 - Add OpenCode Free, Zen, and Go support with official endpoints, model discovery, and authentication validation.

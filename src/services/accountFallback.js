@@ -11,6 +11,7 @@ import {
 } from "../config/errorConfig.js";
 
 import { fnv1a } from "@/lib/security/payloadCapture.js";
+import { extractClientSessionId } from "../utils/sessionManager.js";
 
 export function getQuotaCooldown(backoffLevel = 0) {
   const level = Math.max(0, backoffLevel - 1);
@@ -199,25 +200,52 @@ export function pickCacheAffine(connections, { cacheKey, excludeIds } = {}) {
   const all = connections || [];
   if (all.length === 0) return { connection: null, affinity: "miss" };
   const excluded = excludeIds instanceof Set ? excludeIds : (excludeIds ? new Set(excludeIds) : null);
+  const isExcluded = (c) => !!(excluded && c && excluded.has(c.id));
+  const prio = (c) => (c && c.priority != null ? c.priority : 999);
+
+  // Stable copy ordered by ascending priority (lower number = higher priority).
+  const ordered = all.slice().sort((a, b) => prio(a) - prio(b));
 
   if (!cacheKey) {
 
-    const firstAvail = excluded ? all.find((c) => !excluded.has(c.id)) : all[0];
+    const firstAvail = ordered.find((c) => !isExcluded(c));
     return { connection: firstAvail || null, affinity: "miss" };
   }
 
-  const n = all.length;
-  const bucket = fnv1a(cacheKey) % n;
-  const primary = all[bucket] || null;
-
-  if (primary && (!excluded || !excluded.has(primary.id))) {
-    return { connection: primary, affinity: "hit" };
+  // Group into priority tiers, preserving stable order within each tier.
+  const tiers = [];
+  for (const c of ordered) {
+    const p = prio(c);
+    const last = tiers[tiers.length - 1];
+    if (!last || last.priority !== p) tiers.push({ priority: p, members: [c] });
+    else last.members.push(c);
   }
 
-  for (let step = 1; step <= n; step++) {
-    const cand = all[(bucket + step) % n];
-    if (!cand || (excluded && excluded.has(cand.id))) continue;
-    return { connection: cand, affinity: "rotate" };
+  // Highest-priority tier with capacity wins; affinity is "hit" only when the
+  // top tier's hashed primary is itself available, otherwise "rotate".
+  let rotated = false;
+  for (const tier of tiers) {
+    const members = tier.members;
+    if (members.length === 0) continue;
+    if (members.every((c) => isExcluded(c))) {
+      // Whole tier excluded → fall through to the next tier.
+      rotated = true;
+      continue;
+    }
+
+    const bucket = fnv1a(cacheKey) % members.length;
+    const primary = members[bucket];
+    if (!isExcluded(primary)) {
+      return { connection: primary, affinity: rotated ? "rotate" : "hit" };
+    }
+
+    for (let step = 1; step < members.length; step++) {
+      const cand = members[(bucket + step) % members.length];
+      if (!isExcluded(cand)) return { connection: cand, affinity: "rotate" };
+    }
+
+    // Defensive: tier had a non-excluded member but the walk missed it.
+    rotated = true;
   }
 
   return { connection: null, affinity: "rotate" };
@@ -257,4 +285,31 @@ export function extractCacheKey(body) {
   if (typeof body.prompt === "string" && body.prompt) return body.prompt.slice(0, 256);
   if (typeof body.input === "string" && body.input) return body.input.slice(0, 256);
   return null;
+}
+
+// Resolve a stable cache-affine key for a request.
+// Priority:
+//   (a) an EXPLICIT client-provided session/conversation identity (headers, or
+//       body prompt_cache_key / session_id / conversation_id / metadata.user_id).
+//       An explicit id means "one conversation" → pin it to one account so every
+//       multi-turn request reuses that provider account's prompt cache.
+//       We deliberately ignore the random/derived session fallback (generateBinaryStyleId
+//       / deriveSessionId) here — it is unstable and would defeat affinity.
+//   (b) otherwise fall back to the prompt-prefix text (extractCacheKey), which is
+//       the best available proxy and also shares a common system prompt across clients.
+// Bound to <=256 chars. Format-agnostic (OpenAI messages, Gemini contents, plain prompt/input).
+/**
+ * @param {{ headers?: Record<string, string>|null, body?: unknown, connectionId?: string|null, scope?: string }} [opts]
+ * @returns {string|null}
+ */
+export function deriveCacheKey({ headers, body, connectionId, scope = "" } = {}) {
+  try {
+    // includeRequestId:false — x-client-request-id is PER-REQUEST, not per-conversation;
+    // letting it through would make the key change every call and defeat affinity.
+    const explicit = extractClientSessionId(headers, body, scope, { includeRequestId: false });
+    if (explicit) return `session:${explicit}`.slice(0, 256);
+  } catch {
+
+  }
+  return extractCacheKey(body);
 }

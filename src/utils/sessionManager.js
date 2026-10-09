@@ -90,7 +90,15 @@ function extractAntigravitySession(body) {
     return m ? normalizeSessionId(m[1]) : null;
 }
 
-function extractClientSessionId(headers, body, scope = "") {
+/**
+ * @param {Record<string, string>|null|undefined} headers
+ * @param {unknown} body
+ * @param {string} [scope]
+ * @param {{ includeRequestId?: boolean }} [opts]
+ * @returns {string|null}
+ */
+export function extractClientSessionId(headers, body, scope = "", opts = {}) {
+    const { includeRequestId = true } = opts;
     const claude = extractClaudeCodeSession(body?.metadata?.user_id);
     if (claude) return `claude:${claude}`;
     const antigravity = extractAntigravitySession(body);
@@ -99,7 +107,7 @@ function extractClientSessionId(headers, body, scope = "") {
         const v = headerValue(headers, key);
         if (v) return v;
     }
-    const requestId = scope === "kiro" ? null : headerValue(headers, "x-client-request-id");
+    const requestId = (scope === "kiro" || !includeRequestId) ? null : headerValue(headers, "x-client-request-id");
     if (requestId) return requestId;
     const fromBody =
         normalizeSessionId(body?.prompt_cache_key) ||

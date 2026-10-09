@@ -154,6 +154,7 @@ export function ProviderConnectionsPanel({
                                     { value: "fill-first", label: "Fill-first", mobileLabel: "Fill" },
                                     { value: "round-robin", label: "Round-robin", mobileLabel: "Round" },
                                     { value: "least-inflight", label: "Least-inflight", mobileLabel: "Least" },
+                                    { value: "cache-affine", label: "Cache-affine", mobileLabel: "Cache" },
                                   ]}
                                 />
                               </div>
@@ -162,7 +163,9 @@ export function ProviderConnectionsPanel({
                             <div
                               className={cn(
                                 "inline-flex items-center gap-1.5 sm:gap-1.5",
-                                strategy !== "round-robin" && "hidden sm:inline-flex",
+                                strategy === "cache-affine"
+                                  ? "hidden"
+                                  : strategy !== "round-robin" && "hidden sm:inline-flex",
                               )}
                             >
                               <label

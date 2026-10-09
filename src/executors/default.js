@@ -10,6 +10,7 @@ import {
   applyModelAwareParameterPolicy,
   stripUnsupportedParams,
 } from "../translator/concerns/paramSupport.js";
+import { extractClientSessionId } from "../utils/sessionManager.js";
 
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
 const XAPIKEY = { combined: true, header: "x-api-key", scheme: "raw" };
@@ -69,12 +70,35 @@ const REFRESH_GRANTS = Object.fromEntries(
     })
 );
 
+// Providers verified to accept the `prompt_cache_key` request parameter.
+// SAFETY: this must stay an explicit allowlist. openai-compatible-* providers fall
+// back to the openai config (and thus the quirk), but unknown upstreams may reject
+// unknown params with a 400 — so never inject for them by default.
+const PROMPT_CACHE_KEY_PROVIDERS = { openai: true, azure: true };
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  // Opt-in only: quirk `promptCacheKey: true` AND a verified provider (openai, azure).
+  // Injects only when the client did not already send prompt_cache_key and a stable
+  // CONVERSATION id exists — x-client-request-id is excluded (per-request, would defeat caching).
+  _injectPromptCacheKey(body, credentials) {
+    if (this.config.quirks?.promptCacheKey !== true) return;
+    if (PROMPT_CACHE_KEY_PROVIDERS[this.provider] !== true) return;
+    if (!body || typeof body !== "object") return;
+    if (body.prompt_cache_key != null && body.prompt_cache_key !== "") return;
+    let sessionId = null;
+    try {
+      sessionId = extractClientSessionId(credentials?.rawHeaders, body, this.provider, { includeRequestId: false });
+    } catch {
+
+    }
+    if (sessionId) body.prompt_cache_key = sessionId;
+  }
+
+  transformRequest(model, body, stream, credentials) {
     const transformed = body;
 
     if (transformed && typeof transformed === "object") {
@@ -84,6 +108,7 @@ export class DefaultExecutor extends BaseExecutor {
       }
       stripUnsupportedParams(this.provider, model, transformed);
       applyModelAwareParameterPolicy(this.provider, model, transformed, this.config);
+      this._injectPromptCacheKey(transformed, credentials);
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
