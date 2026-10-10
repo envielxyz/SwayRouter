@@ -2,6 +2,17 @@
 
 All notable changes to Sway Router are documented here.
 
+## [1.3.1] - 2026-10-09
+
+### Performance
+
+- Lazy-load custom provider model catalogs: a custom provider's `/models` is
+  now fetched only when you click Import/Refresh, so selecting a provider with
+  a very large catalog no longer makes the dashboard heavy or laggy. Built-in
+  passthrough providers keep their automatic catalog fetch.
+
+[1.3.1]: https://github.com/envielxyz/SwayRouter/releases/tag/v1.3.1
+
 ## [1.3.0] - 2026-10-09
 
 - Default account-routing strategy is now `cache-affine`, keeping each conversation on one account for maximum provider prompt-cache reuse.
