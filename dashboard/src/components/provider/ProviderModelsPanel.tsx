@@ -166,7 +166,9 @@ export function ProviderModelsPanel({
                             ? "No models match your search."
                             : modelsUnavailable
                               ? "Upstream model catalog unavailable — add a slug above or retry."
-                              : "No models — add a slug above."}
+                              : selected.isCustom || selected.nodeType
+                                ? "No models yet — click Import to fetch this provider’s catalog, or add a slug above."
+                                : "No models — add a slug above."}
                         </p>
                       ) : (
                         <motion.div layout className="space-y-1">

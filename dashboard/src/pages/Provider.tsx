@@ -687,13 +687,19 @@ export default function Provider() {
   const testConnId =
     [...selectedKeys][0] || activeConns[0]?.id || conns[0]?.id;
   const usesConnectionCatalog = usesConnectionModelCatalog(selected);
+  // Custom providers (custom nodes / nodeType) can expose a very large /models
+  // catalog. Fetch it only when the user clicks Import/Refresh, not automatically
+  // on selection — otherwise selecting the provider can lag the dashboard.
+  // Built-in passthrough providers keep the existing auto-fetch behavior.
+  const autoFetchConnectionCatalog =
+    usesConnectionCatalog && !selected?.isCustom && !selected?.nodeType;
   const connectionModelsQ = useQuery({
     queryKey: ["connection-models", selected?.id, testConnId, forceTick],
     queryFn: async () => {
       const payload = await getConnectionModels(testConnId!);
       return normalizeProviderModelRows(payload.models, selected?.id);
     },
-    enabled: Boolean(usesConnectionCatalog && testConnId),
+    enabled: Boolean(autoFetchConnectionCatalog && testConnId),
     retry: false,
   });
   const strategy = selected
