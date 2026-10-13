@@ -125,6 +125,27 @@ describe("router admission", () => {
     expect(admission.snapshot().active).toBe(0);
     expect(admission.snapshot().bodyBytesInUse).toBe(0);
   });
+  test("aborted signal releases the admission slot even if stream body is unread", async () => {
+    const admission = new RouterAdmission({ autoSample: false });
+    const acquired = await admission.acquire(10);
+    const ac = new AbortController();
+    wrapResponseWithAdmission(
+      new Response(new ReadableStream({
+        start() {
+          // Never close, simulate hanging or unconsumed stream
+        },
+      })),
+      () => {
+        acquired.lease?.releaseBody();
+        acquired.lease?.release();
+      },
+      ac.signal,
+    );
+    expect(admission.snapshot().active).toBe(1);
+    ac.abort();
+    expect(admission.snapshot().active).toBe(0);
+    expect(admission.snapshot().bodyBytesInUse).toBe(0);
+  });
 
   test("uses weighted work units and drains a small request around a large waiter", async () => {
     const admission = new RouterAdmission({

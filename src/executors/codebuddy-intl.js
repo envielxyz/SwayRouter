@@ -20,6 +20,9 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
     const systemMessages = source
       .filter((message) => message && ["system", "developer"].includes(message.role))
       .map((message) => ({ ...message, role: "system" }));
+    if (systemMessages.length === 0) {
+      systemMessages.push({ role: "system", content: "You are a helpful assistant." });
+    }
     transformed.messages = [...systemMessages];
     for (const message of source) {
       if (!message || typeof message !== "object" || ["system", "developer"].includes(message.role)) continue;

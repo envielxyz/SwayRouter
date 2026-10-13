@@ -335,20 +335,39 @@ export class RouterAdmission {
 }
 
 export const routerAdmission = new RouterAdmission();
-
-export function wrapResponseWithAdmission(response: Response, release: () => void): Response {
+export function wrapResponseWithAdmission(
+  response: Response,
+  release: () => void,
+  signal: AbortSignal | null = null,
+): Response {
   let released = false;
+  let abortCleanup: (() => void) | null = null;
   const releaseOnce = () => {
     if (released) return;
     released = true;
+    if (abortCleanup) {
+      abortCleanup();
+      abortCleanup = null;
+    }
     release();
   };
+
+  if (signal) {
+    if (signal.aborted) {
+      releaseOnce();
+      return response;
+    }
+    const onAbort = () => releaseOnce();
+    signal.addEventListener("abort", onAbort, { once: true });
+    abortCleanup = () => {
+      try { signal.removeEventListener("abort", onAbort); } catch {}
+    };
+  }
 
   if (!response?.body) {
     releaseOnce();
     return response;
   }
-
   const reader = response.body.getReader();
   const body = new ReadableStream({
     async pull(controller) {

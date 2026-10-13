@@ -27,4 +27,14 @@ describe("CodeBuddy prompt preservation", () => {
       { role: "user", content: [{ type: "text", text: "Hello" }] },
     ]);
   });
+  test("CodeBuddy Intl injects default system message when caller supplies none", () => {
+    const body = {
+      messages: [
+        { role: "user", content: "Hello" },
+      ],
+    };
+    const transformed = new CodeBuddyIntlExecutor().transformRequest("default-model", body, true, {});
+    expect(transformed.messages[0]).toEqual({ role: "system", content: "You are a helpful assistant." });
+    expect(transformed.messages[1]).toEqual({ role: "user", content: [{ type: "text", text: "Hello" }] });
+  });
 });

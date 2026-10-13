@@ -340,14 +340,20 @@ const server = Bun.serve({
       }
 
       const stamped = isMetricsScrape ? resp : stampResponseWithTrace(resp, trace);
+      const isStreaming = resp.headers.get("content-type")?.includes("text/event-stream");
       if (isProxyPath && admissionLease) {
         const releaseAdmission = () => {
           admissionLease?.releaseBody();
           admissionLease?.release();
         };
-        const wrapped = wrapResponseWithAdmission(stamped, releaseAdmission);
-        admissionTransferred = true;
-        return wrapped;
+        if (!isStreaming) {
+          releaseAdmission();
+          admissionTransferred = true;
+        } else {
+          const wrapped = wrapResponseWithAdmission(stamped, releaseAdmission, request.signal);
+          admissionTransferred = true;
+          return wrapped;
+        }
       }
       return stamped;
     } catch (error) {
