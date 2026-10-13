@@ -2,6 +2,18 @@
 
 All notable changes to Sway Router are documented here.
 
+## [1.3.2] - 2026-10-14
+
+### Fixed
+
+- Prevent gateway admission lease leaks: immediately release non-streaming
+  responses and hook `request.signal` aborts on streaming responses so client
+  disconnects never cause permanent `503 router_capacity_exhausted`.
+- Ensure CodeBuddy requests always include a system prompt to satisfy upstream
+  security policy requirement ("first message is not system prompt").
+
+[1.3.2]: https://github.com/envielxyz/SwayRouter/releases/tag/v1.3.2
+
 ## [1.3.1] - 2026-10-09
 
 ### Performance
