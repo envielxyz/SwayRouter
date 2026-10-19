@@ -23,7 +23,6 @@ import { TabsContent } from "@/components/ui/tabs";
 import type { ReactVirtualizer } from "@tanstack/react-virtual";
 import { type AvailableProvider, type Connection } from "@/lib/connections-api";
 import { connectionCtaLabel } from "@/lib/providers-mock";
-import { type RotationStrategy } from "@/lib/settings-api";
 import { type ThinkingLevel, thinkingLabel } from "@/lib/thinking";
 import { cn } from "@/lib/utils";
 
@@ -54,9 +53,6 @@ type ProviderConnectionsPanelProps = {
   selected: AvailableProvider;
   connsAll: Connection[];
   conns: Connection[];
-  strategy: RotationStrategy;
-  strategyPending: boolean;
-  stickyDraft: string;
   thinkingLevels: ThinkingLevel[] | null;
   thinkingValue: ThinkingLevel;
   thinkingPending: boolean;
@@ -70,9 +66,6 @@ type ProviderConnectionsPanelProps = {
   connListRef: RefObject<HTMLDivElement | null>;
   connVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
   connResults: Record<string, ConnectionTestResult>;
-  onStrategyChange: (value: RotationStrategy) => void | Promise<void>;
-  onStickyDraftChange: (value: string) => void;
-  onSaveSticky: () => void | Promise<void>;
   onThinkingChange: (value: ThinkingLevel) => void | Promise<void>;
   onRequestBulkDelete: () => void;
   onClearSelection: () => void;
@@ -93,9 +86,6 @@ export function ProviderConnectionsPanel({
   selected,
   connsAll,
   conns,
-  strategy,
-  strategyPending,
-  stickyDraft,
   thinkingLevels,
   thinkingValue,
   thinkingPending,
@@ -109,9 +99,6 @@ export function ProviderConnectionsPanel({
   connListRef,
   connVirtualizer,
   connResults,
-  onStrategyChange,
-  onStickyDraftChange,
-  onSaveSticky,
   onThinkingChange,
   onRequestBulkDelete,
   onClearSelection,
@@ -136,63 +123,9 @@ export function ProviderConnectionsPanel({
                       <div className="flex shrink-0 flex-wrap items-end justify-between gap-2">
                         <div className="min-w-0 flex-1 space-y-1.5 sm:space-y-2">
                           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:gap-x-3 sm:gap-y-2">
-                            <div className="flex min-w-0 basis-full items-center gap-1.5 sm:basis-auto sm:gap-2">
-                              <span className="text-[11px] font-medium text-muted-foreground sm:hidden">
-                                Routing
-                              </span>
-                              <span className="hidden whitespace-nowrap text-xs font-medium text-muted-foreground sm:inline">
-                                Account routing:
-                              </span>
-                              <div className="min-w-0 flex-1 overflow-hidden sm:flex-none">
-                                <Segmented
-                                  size="sm"
-                                  className="w-full min-w-0 sm:w-auto sm:min-w-[15rem] sm:flex-none"
-                                  value={strategy}
-                                  disabled={strategyPending}
-                                  onChange={onStrategyChange}
-                                  options={[
-                                    { value: "fill-first", label: "Fill-first", mobileLabel: "Fill" },
-                                    { value: "round-robin", label: "Round-robin", mobileLabel: "Round" },
-                                    { value: "least-inflight", label: "Least-inflight", mobileLabel: "Least" },
-                                    { value: "cache-affine", label: "Cache-affine", mobileLabel: "Cache" },
-                                  ]}
-                                />
-                              </div>
-                            </div>
-
-                            <div
-                              className={cn(
-                                "inline-flex items-center gap-1.5 sm:gap-1.5",
-                                strategy === "cache-affine"
-                                  ? "hidden"
-                                  : strategy !== "round-robin" && "hidden sm:inline-flex",
-                              )}
-                            >
-                              <label
-                                htmlFor="provider-sticky-limit"
-                                className="text-xs font-medium text-muted-foreground"
-                              >
-                                Sticky
-                              </label>
-                              <Input
-                                id="provider-sticky-limit"
-                                size="sm"
-                                type="number"
-                                min={1}
-                                value={stickyDraft}
-                                disabled={strategyPending || strategy !== "round-robin"}
-                                onChange={(event) => onStickyDraftChange(event.target.value)}
-                                className="w-14 shrink-0"
-                              />
-                              <RippleButton
-                                size="sm"
-                                variant="outline"
-                                disabled={strategyPending || strategy !== "round-robin"}
-                                onClick={onSaveSticky}
-                              >
-                                Save
-                              </RippleButton>
-                            </div>
+                            <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
+                              Sticky routing: conversations stay on one account for provider cache reuse.
+                            </span>
                           </div>
 
                           {thinkingLevels && thinkingLevels.length > 0 ? (

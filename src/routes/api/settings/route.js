@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
-import { stripRemovedSettings, validateFallbackStrategies } from "@/lib/db/repos/settingsRepo.js";
+import { stripRemovedSettings } from "@/lib/db/repos/settingsRepo.js";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
@@ -85,15 +85,6 @@ export async function PATCH(request) {
     }
 
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
-
-    try {
-      validateFallbackStrategies(body);
-    } catch (error) {
-      if (error?.code === "INVALID_FALLBACK_STRATEGY") {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-      throw error;
-    }
 
     const currentSettings = await getSettings();
     if (

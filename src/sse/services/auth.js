@@ -1,22 +1,19 @@
 import { getProviderConnectionById, getProviderConnectionsForRouting, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import {
-  formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate,
+  formatRetryAfter, isModelLockActive, buildModelLockUpdate,
   getEarliestModelLockUntil,
 
-  isDeprioritized, sortWithDeprioritization, pickCacheAffine,
+  sortWithDeprioritization, pickCacheAffine,
   DEPRIORITIZE_FIELD,
 } from "../../services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS, classifyError, ERROR_TIERS, isQuotaExhaustionError } from "../../config/errorConfig.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
-import { recordLock, clearLock, clearAllLocksForConnection } from "@/lib/db/repos/accountModelLocksRepo.js";
+import { recordLock, clearLock } from "@/lib/db/repos/accountModelLocksRepo.js";
 import { accountFallbackDecisionsTotal, cacheAffineSelectionsTotal } from "@/observability/metrics.js";
 import { resolveProviderId, NO_AUTH_PROVIDERS } from "@/providers/display.js";
 import {
-  getCachedProviderConnections,
   invalidateProviderAccountPool,
-  pickLeastInflightConnection,
-  rankConnectionsByInflight,
   resolveAccountPoolConfig,
   tryAcquireAccountSlot,
   waitForAccountCapacity,
@@ -102,16 +99,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const settings = await getSettings();
 
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
     const poolConfig = resolveAccountPoolConfig(settings, providerOverride);
 
-    const connections = strategy === "round-robin" || strategy === "cache-affine"
-      ? await getProviderConnectionsForRouting({ provider: providerId, isActive: true })
-      : await getCachedProviderConnections(
-        providerId,
-        () => getProviderConnectionsForRouting({ provider: providerId, isActive: true }),
-        poolConfig.cacheTtlMs,
-      );
+    // Single routing path: priority-aware sticky (cache-affine). Legacy
+    // fallbackStrategy values are ignored; the picker already degrades to
+    // priority order when no cache key exists.
+    const connections = await getProviderConnectionsForRouting({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
@@ -167,8 +160,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection && preferredConnectionId) {
 
-    } else if (strategy === "cache-affine") {
-
+    } else {
       const cacheKey = deriveCacheKey(options);
       const { connection: picked, affinity } = pickCacheAffine(rankedConnections, {
         cacheKey,
@@ -178,59 +170,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       try { cacheAffineSelectionsTotal.inc({ result: affinity || "miss" }); } catch {}
       if (connection && cacheKey) {
         log.debug("AUTH", `${provider} | cache-affine(${affinity}) → ${connection.id?.slice(0, 8)}`);
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        });
       }
-    } else if (strategy === "round-robin") {
-      const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 1;
-
-      const byRecency = [...rankedConnections].sort((a, b) => {
-        if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-        if (!a.lastUsedAt) return 1;
-        if (!b.lastUsedAt) return -1;
-        return new Date(b.lastUsedAt) - new Date(a.lastUsedAt);
-      });
-
-      const current = byRecency[0];
-      const currentCount = current?.consecutiveUseCount || 0;
-
-      if (current && current.lastUsedAt && currentCount < stickyLimit) {
-
-        connection = current;
-
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: (connection.consecutiveUseCount || 0) + 1
-        });
-      } else {
-
-        const sortedByOldest = [...rankedConnections].sort((a, b) => {
-          if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
-          if (!a.lastUsedAt) return -1;
-          if (!b.lastUsedAt) return 1;
-          return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
-        });
-
-        connection = sortedByOldest[0];
-
-        await updateProviderConnection(connection.id, {
-          lastUsedAt: new Date().toISOString(),
-          consecutiveUseCount: 1
-        });
-      }
-    } else if (strategy === "least-inflight") {
-
-      connection = pickLeastInflightConnection(rankedConnections);
-    } else {
-
-      connection = rankedConnections[0];
     }
 
     let candidateConnections = preferredConnectionId && connection
       ? [connection]
-      : [connection, ...(strategy === "least-inflight" ? [] : rankedConnections)]
+      : [connection, ...rankedConnections]
         .filter(Boolean)
         .filter((candidate, index, list) => list.findIndex((item) => item.id === candidate.id) === index);
     const candidateIds = availableConnections.map((candidate) => candidate.id);
@@ -239,7 +184,6 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     let selectedConnection = null;
     let releaseAccountSlot = null;
     let sawStaleConnection = false;
-    let expandedLeastInflightFallback = strategy !== "least-inflight" || Boolean(preferredConnectionId);
     let candidateIndex = 0;
     while (candidateIndex < candidateConnections.length) {
       const candidate = candidateConnections[candidateIndex];
@@ -264,19 +208,6 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
 
       candidateIndex += 1;
-
-      if (
-        strategy === "least-inflight"
-        && candidateIndex >= candidateConnections.length
-        && !expandedLeastInflightFallback
-      ) {
-        expandedLeastInflightFallback = true;
-        const selectedId = candidateConnections[0]?.id;
-        candidateConnections = [
-          ...candidateConnections,
-          ...rankConnectionsByInflight(rankedConnections).filter((item) => item.id !== selectedId),
-        ];
-      }
     }
 
     if (!selectedConnection) {

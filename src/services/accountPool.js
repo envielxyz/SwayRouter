@@ -138,66 +138,10 @@ function getAccountLoadEntry(connectionId, provider = null) {
   return entry;
 }
 
-export function getAccountLoad(connectionId) {
-  return state.accountLoads.get(connectionId)?.active || 0;
-}
-
-export function getProviderLoad(provider) {
+function getProviderLoad(provider) {
   return state.providerLoads.get(provider)?.active || 0;
 }
 
-export function getAccountQueueLoad(connectionId) {
-  const provider = state.accountLoads.get(connectionId)?.provider;
-  if (!provider) return 0;
-  const queue = state.providerQueues.get(provider);
-  if (!queue) return 0;
-  return [...queue.waiters].filter((waiter) => !waiter.connectionIds || waiter.connectionIds.has(connectionId)).length;
-}
-
-export function pickLeastInflightConnection(connections = []) {
-  let best = null;
-  let bestActive = Infinity;
-  let bestLastAssigned = Infinity;
-  let bestPriority = Infinity;
-
-  for (const connection of connections) {
-    const active = getAccountLoad(connection?.id);
-    const lastAssigned = state.accountLoads.get(connection?.id)?.lastAssignedAt || 0;
-    const priority = Number.isFinite(Number(connection?.priority)) ? Number(connection.priority) : 999;
-    if (
-      active < bestActive
-      || (active === bestActive && lastAssigned < bestLastAssigned)
-      || (active === bestActive && lastAssigned === bestLastAssigned && priority < bestPriority)
-    ) {
-      best = connection;
-      bestActive = active;
-      bestLastAssigned = lastAssigned;
-      bestPriority = priority;
-    }
-  }
-  return best;
-}
-
-export function rankConnectionsByInflight(connections = []) {
-  return [...connections]
-    .map((connection, index) => ({ connection, index }))
-    .sort((left, right) => {
-      const a = left.connection;
-      const b = right.connection;
-      const activeDiff = getAccountLoad(a?.id) - getAccountLoad(b?.id);
-      if (activeDiff !== 0) return activeDiff;
-
-      const aLast = state.accountLoads.get(a?.id)?.lastAssignedAt || 0;
-      const bLast = state.accountLoads.get(b?.id)?.lastAssignedAt || 0;
-      if (aLast !== bLast) return aLast - bLast;
-
-      const aPriority = Number.isFinite(Number(a?.priority)) ? Number(a.priority) : 999;
-      const bPriority = Number.isFinite(Number(b?.priority)) ? Number(b.priority) : 999;
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      return left.index - right.index;
-    })
-    .map(({ connection }) => connection);
-}
 
 function notifyProviderQueue(provider, releasedConnectionId) {
   const queue = state.providerQueues.get(provider);
@@ -320,66 +264,7 @@ export function waitForAccountCapacity(provider, connectionIds, config = {}, sig
   });
 }
 
-function toRoutingConnection(connection) {
-  const routing = { ...connection };
-  for (const key of [
-    "apiKey", "accessToken", "refreshToken", "idToken", "copilotToken",
-    "providerSpecificData", "tokenType", "scope", "expiresAt", "expiresIn",
-  ]) delete routing[key];
-  return routing;
-}
-
-function pruneInactiveAccountLoads(provider, activeIds) {
-  for (const [connectionId, entry] of state.accountLoads.entries()) {
-    if (entry.provider === provider && entry.active === 0 && !activeIds.has(connectionId)) {
-      state.accountLoads.delete(connectionId);
-    }
-  }
-}
-
-export async function getCachedProviderConnections(provider, loader, ttlMs = Number(ACCOUNT_POOL_DEFAULTS.cacheTtlMs)) {
-  const key = String(provider || "");
-  const now = Date.now();
-  const hit = state.providerCache.get(key);
-  if (hit?.value && hit.expiresAt > now) return hit.value;
-  if (hit?.promise) return hit.promise;
-
-  const promise = Promise.resolve()
-    .then(loader)
-    .then((connections) => {
-      const value = Array.isArray(connections) ? connections.map(toRoutingConnection) : [];
-      pruneInactiveAccountLoads(key, new Set(value.map((connection) => connection.id)));
-      state.providerCache.set(key, { value, expiresAt: Date.now() + Math.max(0, ttlMs) });
-      return value;
-    })
-    .catch((error) => {
-      state.providerCache.delete(key);
-      throw error;
-    });
-
-  state.providerCache.set(key, { promise });
-  return promise;
-}
-
-export function invalidateProviderAccountPool(provider) {
-  if (provider) state.providerCache.delete(String(provider));
-  else state.providerCache.clear();
-}
-
-export function getAccountPoolSnapshot(provider = null) {
-  const accounts = [];
-  for (const [connectionId, entry] of state.accountLoads.entries()) {
-    if (provider && entry.provider !== provider) continue;
-    accounts.push({ connectionId, provider: entry.provider, active: entry.active });
-  }
-  return {
-    provider,
-    activeProvider: provider ? getProviderLoad(provider) : null,
-    activeProviders: [...state.providerLoads.entries()].map(([id, entry]) => ({ provider: id, active: entry.active })),
-    activeAccounts: accounts,
-    queued: provider ? (state.providerQueues.get(provider)?.waiters.size || 0) : [...state.providerQueues.values()].reduce((sum, queue) => sum + queue.waiters.size, 0),
-  };
-}
+export function invalidateProviderAccountPool(_provider) {}
 
 export function resetAccountPoolForTests() {
   state.accountLoads.clear();

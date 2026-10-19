@@ -16,15 +16,27 @@ const CUSTOM_PROVIDER_TYPES = new Set([
   "custom-embedding",
 ]);
 const ROUTING_SETTING_KEYS = new Set([
-  "fallbackStrategy",
-  "stickyRoundRobinLimit",
-  "comboStickyRoundRobinLimit",
   "accountPool",
   "capacityAdapter",
   "providerStrategies",
   "providerThinking",
   "comboStrategies",
 ]);
+// Retired account-routing strategy keys: never imported, stripped from entries.
+const RETIRED_PROVIDER_STRATEGY_KEYS = { fallbackStrategy: true, stickyRoundRobinLimit: true };
+
+function stripRetiredProviderStrategyKeys(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+  let changed = false;
+  const clean = { ...entry };
+  for (const key of Object.keys(RETIRED_PROVIDER_STRATEGY_KEYS)) {
+    if (Object.prototype.hasOwnProperty.call(clean, key)) {
+      delete clean[key];
+      changed = true;
+    }
+  }
+  return changed ? clean : entry;
+}
 const TRANSIENT_CONNECTION_FIELDS = new Set([
   "testStatus",
   "lastTested",
@@ -690,15 +702,24 @@ export function buildNineRouterMigrationPlan(rawPayload, rawOptions, current = {
 
   if (options.routingSettings) {
     for (const [key, value] of Object.entries(payload.settings)) {
+      if (key === "fallbackStrategy" || key === "stickyRoundRobinLimit") continue;
       if (!ROUTING_SETTING_KEYS.has(key)) continue;
-      if (key === "providerStrategies" || key === "providerThinking") {
+      if (key === "providerStrategies" && isPlainObject(value)) {
+        const rewritten = rewriteStrategyMap(value, providerMap, unavailableNodeAliases);
+        const cleaned = {};
+        for (const [providerId, entry] of Object.entries(rewritten)) {
+          const stripped = stripRetiredProviderStrategyKeys(entry);
+          if (stripped && typeof stripped === "object" && !Array.isArray(stripped) && Object.keys(stripped).length === 0) continue;
+          cleaned[providerId] = stripped;
+        }
+        if (Object.keys(cleaned).length === 0) continue;
+        plan.settings[key] = cleaned;
+      } else if (key === "providerThinking") {
         plan.settings[key] = rewriteStrategyMap(value, providerMap, unavailableNodeAliases);
       } else if (key === "comboStrategies" && isPlainObject(value)) {
         plan.settings[key] = Object.fromEntries(
           Object.entries(value).map(([name, strategy]) => [comboNameMap.get(normalized(name)) || name, strategy]),
         );
-      } else if (key === "fallbackStrategy" && value === "least-inflight") {
-        plan.settings[key] = "fill-first";
       } else {
         plan.settings[key] = value;
       }

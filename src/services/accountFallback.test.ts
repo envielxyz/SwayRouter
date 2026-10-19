@@ -317,6 +317,29 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       expect(r.affinity).toBe("rotate");
     }
   });
+
+  test("deprioritized accounts sink below clean accounts of any priority", () => {
+    const conns: Array<{ id: string; priority: number; [DEPRIORITIZE_FIELD]?: number }> = [
+      { id: "cooldown-top", priority: 1, [DEPRIORITIZE_FIELD]: now() + 60_000 },
+      { id: "clean-low", priority: 9 },
+    ];
+    for (const cacheKey of ["d-0", "d-1", "d-2", "d-3", "d-4", "d-5", "d-6", "d-7"]) {
+      const r = pickCacheAffine(conns, { cacheKey });
+      expect(r.connection?.id).toBe("clean-low");
+      // Deprioritized accounts form their own lower tier, so the clean
+      // account is the untouched primary of the top tier: a sticky hit.
+      expect(r.affinity).toBe("hit");
+    }
+  });
+
+  test("all clean accounts out → falls back to a cooldown account instead of null", () => {
+    const conns: Array<{ id: string; priority: number; [DEPRIORITIZE_FIELD]?: number }> = [
+      { id: "cooldown-only", priority: 1, [DEPRIORITIZE_FIELD]: now() + 60_000 },
+    ];
+    const r = pickCacheAffine(conns, { cacheKey: "k" });
+    expect(r.connection?.id).toBe("cooldown-only");
+    expect(r.affinity).toBe("rotate");
+  });
 });
 
 describe("A4.2 extractCacheKey — format-agnostic", () => {
@@ -505,9 +528,9 @@ describe("A4.2 responses translators — preserve client prompt_cache_key", () =
   });
 });
 
-describe("A4.2 cache-affine routing — never hard-blocks (integration)", () => {
+describe("sticky routing — never hard-blocks (integration)", () => {
   test("sticky across calls; excluded primary rotates instead of blocking", async () => {
-    const provider = `cache-affine-test-${crypto.randomUUID()}`;
+    const provider = `sticky-routing-test-${crypto.randomUUID()}`;
     const createdIds: string[] = [];
     try {
       const a = await createProviderConnection({ provider, authType: "apikey", apiKey: `k-${crypto.randomUUID()}`, autoName: true });
@@ -515,8 +538,6 @@ describe("A4.2 cache-affine routing — never hard-blocks (integration)", () => 
       expect(a?.id).toBeString();
       expect(b?.id).toBeString();
       createdIds.push(a!.id as string, b!.id as string);
-
-      await updateSettings({ providerStrategies: { [provider]: { fallbackStrategy: "cache-affine" } } });
 
       const opts = { cacheKey: "session:stable-conv" };
       const first = await getProviderCredentials(provider, null, "test-model", opts);

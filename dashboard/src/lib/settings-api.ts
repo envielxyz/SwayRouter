@@ -1,7 +1,5 @@
 import { api } from "@/lib/api";
 
-export type RotationStrategy = "least-inflight" | "fill-first" | "round-robin" | "cache-affine";
-
 export type AppSettings = {
 
   profileName?: string;
@@ -14,14 +12,9 @@ export type AppSettings = {
   payloadCaptureEnabled?: boolean;
   hasPassword?: boolean;
   tunnelDashboardAccess?: boolean;
-  stickyRoundRobinLimit?: number;
-  fallbackStrategy?: RotationStrategy;
   providerStrategies?: Record<
     string,
-    {
-      fallbackStrategy?: RotationStrategy;
-      stickyRoundRobinLimit?: number;
-    }
+    Record<string, unknown>
   >;
 
   providerThinking?: Record<string, string>;
@@ -62,41 +55,4 @@ export async function shutdownRouter() {
   return data;
 }
 
-export function getProviderStrategy(
-  settings: AppSettings | undefined,
-  providerId: string
-): RotationStrategy {
-  const per = settings?.providerStrategies?.[providerId]?.fallbackStrategy;
-  if (
-    per === "least-inflight" ||
-    per === "fill-first" ||
-    per === "round-robin" ||
-    per === "cache-affine"
-  ) return per;
-  const global = settings?.fallbackStrategy;
-  if (
-    global === "least-inflight" ||
-    global === "fill-first" ||
-    global === "round-robin" ||
-    global === "cache-affine"
-  ) {
-    return global;
-  }
-  return "fill-first";
-}
 
-export function getProviderStickyRoundRobin(
-  settings: AppSettings | undefined,
-  providerId: string
-): number {
-  const per =
-    settings?.providerStrategies?.[providerId]?.stickyRoundRobinLimit;
-  if (typeof per === "number" && per >= 1) return per;
-  if (
-    typeof settings?.stickyRoundRobinLimit === "number" &&
-    settings.stickyRoundRobinLimit >= 1
-  ) {
-    return settings.stickyRoundRobinLimit;
-  }
-  return 1;
-}

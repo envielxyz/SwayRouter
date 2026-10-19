@@ -9,7 +9,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await updateSettings({ fallbackStrategy: "fill-first", providerStrategies: {}, profileName: "" });
+  await updateSettings({ providerStrategies: {}, profileName: "" });
 });
 
 describe("settings response serialization", () => {
@@ -42,44 +42,26 @@ describe("settings response serialization", () => {
   });
 });
 
-describe("PATCH /api/settings fallbackStrategy validation", () => {
-  test("accepts a valid strategy and persists it", async () => {
+describe("PATCH /api/settings retired routing strategy", () => {
+  test("ignores legacy strategy fields instead of persisting them", async () => {
     const response = await cookieStoreAls.run({ cookies: createCookieStore(), headers: new Headers() }, () => PATCH(new Request("http://localhost/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fallbackStrategy: "cache-affine" }),
+      body: JSON.stringify({ fallbackStrategy: "cache-affine", stickyRoundRobinLimit: 3 }),
     })));
     expect(response.status).toBe(200);
-    expect((await getSettings()).fallbackStrategy).toBe("cache-affine");
+    expect(await getSettings()).not.toHaveProperty("fallbackStrategy");
+    expect(await getSettings()).not.toHaveProperty("stickyRoundRobinLimit");
   });
 
-  test("rejects an unknown strategy with 400 and does not persist it", async () => {
-    await cookieStoreAls.run({ cookies: createCookieStore(), headers: new Headers() }, () => PATCH(new Request("http://localhost/api/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fallbackStrategy: "round-robin" }),
-    })));
-
-    const response = await cookieStoreAls.run({ cookies: createCookieStore(), headers: new Headers() }, () => PATCH(new Request("http://localhost/api/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fallbackStrategy: "bogus-strategy" }),
-    })));
-    expect(response.status).toBe(400);
-    const payload = await response.json();
-    const message = payload && typeof payload === "object" && "error" in payload ? payload.error : "";
-    expect(String(message)).toContain("bogus-strategy");
-
-    expect((await getSettings()).fallbackStrategy).toBe("round-robin");
-  });
-
-  test("rejects an unknown nested provider strategy with 400", async () => {
+  test("strips legacy nested provider strategy keys", async () => {
     const response = await cookieStoreAls.run({ cookies: createCookieStore(), headers: new Headers() }, () => PATCH(new Request("http://localhost/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ providerStrategies: { openai: { fallbackStrategy: "bogus-strategy" } } }),
     })));
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
+    expect((await getSettings()).providerStrategies).toEqual({});
   });
 
   test("still saves an unrelated settings field", async () => {

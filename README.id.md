@@ -442,15 +442,10 @@ gateway:
 
 ### Routing dan fallback
 
-- `cache-affine` adalah strategi routing akun default: menjaga setiap percakapan
-  pada satu akun agar prompt cache provider dipakai ulang secara maksimal.
-- `fill-first` untuk penggunaan akun yang predictable. Kembali ke sana saat
-  konsumsi free-tier atau priority-first yang ketat lebih penting.
-- `round-robin` untuk rotasi sederhana.
-- `least-inflight` untuk membagi request aktif.
-- Perilaku `sticky` saat koneksi akun perlu tetap stabil.
-- Override routing per provider (termasuk mengganti provider ke `fill-first`)
-  dan kontrol sticky.
+- Sticky account routing: setiap percakapan bertahan di satu akun agar prompt
+  cache provider dipakai ulang secara maksimal.
+- Pemilihan akun berbasis prioritas dengan rotasi otomatis saat akun yang
+  dipin sedang tidak tersedia.
 - Combo untuk fallback model/provider secara berurutan.
 - Cooldown akun, account lock, endpoint fallback, dan retry yang dibatasi.
 

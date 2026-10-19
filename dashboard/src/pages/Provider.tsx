@@ -56,11 +56,8 @@ import {
 import { api, getErrorMessage } from "@/lib/api";
 import {
   fetchSettings,
-  getProviderStickyRoundRobin,
-  getProviderStrategy,
   updateSettings,
   type AppSettings,
-  type RotationStrategy,
 } from "@/lib/settings-api";
 import { resolveAuthFlow, type AuthFlow } from "@/lib/providers";
 import {
@@ -339,7 +336,6 @@ export default function Provider() {
   }
 
   const [forceTick, setForceTick] = useState(0);
-  const [stickyDraft, setStickyDraft] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
 
   const [testingConnId, setTestingConnId] = useState<string | null>(null);
@@ -612,11 +608,6 @@ export default function Provider() {
     setDetailTab("connections");
   }, [selectedId]);
 
-  useEffect(() => {
-    const sticky = getProviderStickyRoundRobin(settings, selectedId || "");
-    setStickyDraft(String(sticky));
-  }, [selectedId, settings]);
-
   const selected = sorted.find((p) => p.id === selectedId) || null;
 
   useEffect(() => {
@@ -702,9 +693,7 @@ export default function Provider() {
     enabled: Boolean(autoFetchConnectionCatalog && testConnId),
     retry: false,
   });
-  const strategy = selected
-    ? getProviderStrategy(settings, selected.id)
-    : "fill-first";
+  // Account routing is always sticky; no strategy selection remains.
 
   const QODER_MODEL_NAMES: Record<string, string> = {
     "qd/ultimate": "Ultimate",
@@ -1279,25 +1268,7 @@ export default function Provider() {
     }
   }
 
-  const strategyM = useMutation({
-    mutationFn: async (patch: {
-      strategy?: RotationStrategy;
-      sticky?: number;
-    }) => {
-      if (!selected) return;
-      const current = settings?.providerStrategies || {};
-      const entry = { ...(current[selected.id] || {}) };
-      if (patch.strategy) entry.fallbackStrategy = patch.strategy;
-      if (patch.sticky) entry.stickyRoundRobinLimit = patch.sticky;
-      return updateSettings({
-        providerStrategies: { ...current, [selected.id]: entry },
-      });
-    },
-    onSuccess: () => {
-
-      void qc.invalidateQueries({ queryKey: ["settings"] });
-    },
-  });
+  // Strategy selection retired: routing is always sticky.
 
   const thinkingM = useMutation({
     mutationFn: async (level: ThinkingLevel) => {
@@ -1747,9 +1718,6 @@ export default function Provider() {
                     selected={selected}
                     connsAll={connsAll}
                     conns={conns}
-                    strategy={strategy}
-                    strategyPending={strategyM.isPending}
-                    stickyDraft={stickyDraft}
                     thinkingLevels={thinkingLevels}
                     thinkingValue={thinkingValue}
                     thinkingPending={thinkingM.isPending}
@@ -1763,13 +1731,6 @@ export default function Provider() {
                     connListRef={connListRef}
                     connVirtualizer={connVirtualizer}
                     connResults={connResults}
-                    onStrategyChange={(value) => strategyM.mutate({ strategy: value })}
-                    onStickyDraftChange={setStickyDraft}
-                    onSaveSticky={() => {
-                      const next = Math.max(1, parseInt(stickyDraft, 10) || 1);
-                      strategyM.mutate({ sticky: next });
-                      setStickyDraft(String(next));
-                    }}
                     onThinkingChange={(value) => thinkingM.mutate(value)}
                     onRequestBulkDelete={() => setBulkDeleteIds([...selectedKeys])}
                     onClearSelection={() => setSelectedKeys(new Set())}

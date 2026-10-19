@@ -11,8 +11,6 @@ const DEFAULT_SETTINGS = {
   tunnelEnabled: false,
   tunnelUrl: "",
   tunnelProvider: "cloudflare",
-  stickyRoundRobinLimit: 1,
-  fallbackStrategy: "cache-affine",
   providerStrategies: {},
 
   accountPool: {
@@ -64,12 +62,43 @@ const REMOVED_SETTING_KEYS = [
   "oidcClientSecret",
   "oidcScopes",
   "oidcLoginLabel",
+  // Retired account-routing strategy selection: routing is always sticky now.
+  // Keys are stripped on read so legacy payloads keep merging cleanly.
+  "fallbackStrategy",
+  "stickyRoundRobinLimit",
 ];
+
+const REMOVED_PROVIDER_STRATEGY_KEYS = { fallbackStrategy: true, stickyRoundRobinLimit: true };
+
+function stripRemovedProviderStrategies(raw) {
+  const map = raw?.providerStrategies;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return raw;
+  let changed = false;
+  const next = { ...raw, providerStrategies: { ...map } };
+  for (const [providerId, entry] of Object.entries(map)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    let entryChanged = false;
+    const clean = { ...entry };
+    for (const key of Object.keys(REMOVED_PROVIDER_STRATEGY_KEYS)) {
+      if (Object.prototype.hasOwnProperty.call(clean, key)) {
+        delete clean[key];
+        entryChanged = true;
+      }
+    }
+    if (entryChanged) {
+      changed = true;
+      if (Object.keys(clean).length === 0) delete next.providerStrategies[providerId];
+      else next.providerStrategies[providerId] = clean;
+    }
+  }
+  return changed ? next : raw;
+}
 
 export function stripRemovedSettings(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const clean = { ...raw };
+  let clean = { ...raw };
   for (const key of REMOVED_SETTING_KEYS) delete clean[key];
+  clean = stripRemovedProviderStrategies(clean);
   return clean;
 }
 
@@ -91,34 +120,10 @@ function mergeWithDefaults(raw) {
 
 const settingsCache = getConfigCache("settings", { ttlMs: 5000 });
 
-export const FALLBACK_STRATEGIES = ["fill-first", "round-robin", "least-inflight", "cache-affine"];
-
-// Validate routing strategies on WRITE only (the incoming patch). Reading an already
-// persisted legacy/unknown value must never throw. Mirrors the allowlist used by
-// validateDatabaseBackup (src/lib/db/index.js); backup import writes to the DB directly
-// and does not call updateSettings, so this cannot affect it.
-export function validateFallbackStrategies(updates) {
-  if (!updates || typeof updates !== "object" || Array.isArray(updates)) return;
-  const check = (value, label) => {
-    if (FALLBACK_STRATEGIES.includes(value)) return;
-    const error = new Error(
-      `Invalid fallbackStrategy "${String(value)}"${label}. Allowed: ${FALLBACK_STRATEGIES.join(", ")}`,
-    );
-    error.code = "INVALID_FALLBACK_STRATEGY";
-    throw error;
-  };
-  if (Object.prototype.hasOwnProperty.call(updates, "fallbackStrategy")) {
-    check(updates.fallbackStrategy, "");
-  }
-  const providerStrategies = updates.providerStrategies;
-  if (providerStrategies && typeof providerStrategies === "object" && !Array.isArray(providerStrategies)) {
-    for (const [providerId, strategy] of Object.entries(providerStrategies)) {
-      if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) continue;
-      if (!Object.prototype.hasOwnProperty.call(strategy, "fallbackStrategy")) continue;
-      check(strategy.fallbackStrategy, ` for provider "${providerId}"`);
-    }
-  }
-}
+// Routing is always sticky: strategy selection was retired. Writes carrying
+// legacy fallbackStrategy / stickyRoundRobinLimit keys are ignored (never throw),
+// and reads of already-persisted values never throw either.
+export function validateFallbackStrategies(_updates) {}
 
 export async function getSettings() {
   return await settingsCache.get("merged", async () => {
@@ -128,7 +133,6 @@ export async function getSettings() {
 }
 
 export async function updateSettings(updates) {
-  validateFallbackStrategies(updates);
   const db = await getAdapter();
   let next;
   db.transaction(function () {

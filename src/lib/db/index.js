@@ -176,15 +176,14 @@ export function validateDatabaseBackup(payload) {
   ];
   for (const field of booleanSettings) assertBoolean(payload.settings[field], `settings.${field}`);
   for (const field of [
-    "stickyRoundRobinLimit", "comboStickyRoundRobinLimit", "observabilityMaxRecords",
+    "comboStickyRoundRobinLimit", "observabilityMaxRecords",
     "observabilityBatchSize", "observabilityFlushIntervalMs", "observabilityMaxJsonSize",
   ]) assertInteger(payload.settings[field], `settings.${field}`);
   for (const field of [
     "profileName", "tunnelUrl", "tunnelProvider", "cavemanLevel", "ponytailLevel",
   ]) assertString(payload.settings[field], `settings.${field}`, { required: false, max: 4096 });
-  assertOneOf(payload.settings.fallbackStrategy, "settings.fallbackStrategy", [
-    "fill-first", "round-robin", "least-inflight", "cache-affine",
-  ]);
+  // Retired: account routing is always sticky; legacy fallbackStrategy /
+  // stickyRoundRobinLimit values in backups are ignored on import.
   for (const field of ["providerStrategies", "quotaVisibility", "comboStrategies", "capacityAdapter", "cliModelMappings"]) {
     if (payload.settings[field] !== undefined) assertPlainObject(payload.settings[field], `settings.${field}`);
   }

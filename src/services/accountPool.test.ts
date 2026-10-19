@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
-  getAccountLoad,
-  getProviderLoad,
-  getCachedProviderConnections,
-  rankConnectionsByInflight,
   resolveAccountPoolConfig,
   resetAccountPoolForTests,
   tryAcquireAccountSlot,
@@ -15,7 +11,6 @@ const config = {
   maxConcurrentPerAccount: 1,
   maxQueuePerProvider: 1,
   queueWaitTimeoutMs: 500,
-  cacheTtlMs: 1000,
 };
 
 afterEach(() => resetAccountPoolForTests());
@@ -25,28 +20,13 @@ describe("account pool leases", () => {
     expect(resolveAccountPoolConfig({ accountPool: { enabled: true } }).maxConcurrentPerAccount).toBe(30);
   });
 
-  test("ranks the least-loaded account first", () => {
+  test("tracks the per-account lease count", () => {
     const release = tryAcquireAccountSlot("p", "a", { ...config, maxConcurrentPerAccount: 3 });
-    expect(getAccountLoad("a")).toBe(1);
-
-    const ranked = rankConnectionsByInflight([
-      { id: "a", priority: 1 },
-      { id: "b", priority: 2 },
-    ]);
-    expect(ranked.map((item) => item.id)).toEqual(["b", "a"]);
+    expect(release).not.toBeNull();
+    expect(tryAcquireAccountSlot("p", "b", { ...config, maxConcurrentPerAccount: 3 })).not.toBeNull();
 
     release?.();
-    expect(getAccountLoad("a")).toBe(0);
-  });
-
-  test("uses the least-recently assigned account when active loads tie", () => {
-    const release = tryAcquireAccountSlot("p", "a", { ...config, maxConcurrentPerAccount: 3 });
-    release?.();
-    const ranked = rankConnectionsByInflight([
-      { id: "a", priority: 1 },
-      { id: "b", priority: 2 },
-    ]);
-    expect(ranked[0]?.id).toBe("b");
+    expect(tryAcquireAccountSlot("p", "a", { ...config, maxConcurrentPerAccount: 3 })).not.toBeNull();
   });
 
   test("enforces the per-account limit and wakes a queued request", async () => {
@@ -69,7 +49,6 @@ describe("account pool leases", () => {
     const second = tryAcquireAccountSlot("p", "b", capped);
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
-    expect(getProviderLoad("p")).toBe(2);
     expect(tryAcquireAccountSlot("p", "c", capped)).toBeNull();
 
     const waiting = waitForAccountCapacity("p", ["a", "b", "c"], capped);
@@ -77,30 +56,17 @@ describe("account pool leases", () => {
     expect(await waiting).toMatchObject({ ok: true, releasedConnectionId: "a" });
     const third = tryAcquireAccountSlot("p", "c", capped);
     expect(third).not.toBeNull();
-    expect(getProviderLoad("p")).toBe(2);
 
     second?.();
     third?.();
-    expect(getProviderLoad("p")).toBe(0);
+    expect(tryAcquireAccountSlot("p", "c", capped)).not.toBeNull();
   });
 
-  test("bounds a full queue and strips credentials from the routing cache", async () => {
+  test("bounds a full queue", async () => {
     const first = tryAcquireAccountSlot("p", "a", config);
     const firstWait = waitForAccountCapacity("p", ["a"], config);
     const rejected = await waitForAccountCapacity("p", ["a"], config);
     expect(rejected).toEqual({ ok: false, reason: "queue_full" });
-
-    let calls = 0;
-    const loader = async () => {
-      calls += 1;
-      return [{ id: "a", provider: "p", apiKey: "secret", accessToken: "token", priority: 1 }];
-    };
-    const firstPool = await getCachedProviderConnections("p", loader, config.cacheTtlMs);
-    const secondPool = await getCachedProviderConnections("p", loader, config.cacheTtlMs);
-    expect(calls).toBe(1);
-    expect(firstPool[0]).not.toHaveProperty("apiKey");
-    expect(firstPool[0]).not.toHaveProperty("accessToken");
-    expect(secondPool).toEqual(firstPool);
 
     first?.();
     expect(await firstWait).toMatchObject({ ok: true, releasedConnectionId: "a" });

@@ -200,22 +200,25 @@ export function pickCacheAffine(connections, { cacheKey, excludeIds } = {}) {
   const all = connections || [];
   if (all.length === 0) return { connection: null, affinity: "miss" };
   const excluded = excludeIds instanceof Set ? excludeIds : (excludeIds ? new Set(excludeIds) : null);
-  const isExcluded = (c) => !!(excluded && c && excluded.has(c.id));
+  const isOut = (c) => !!(excluded && c && excluded.has(c.id)) || isDeprioritized(c);
   const prio = (c) => (c && c.priority != null ? c.priority : 999);
 
   // Stable copy ordered by ascending priority (lower number = higher priority).
-  const ordered = all.slice().sort((a, b) => prio(a) - prio(b));
+  // Deprioritized accounts sink last so a hashed primary never lands on cooldown.
+  const ordered = all.slice().sort((a, b) => {
+    const dep = Number(isDeprioritized(a)) - Number(isDeprioritized(b));
+    return dep !== 0 ? dep : prio(a) - prio(b);
+  });
 
   if (!cacheKey) {
-
-    const firstAvail = ordered.find((c) => !isExcluded(c));
-    return { connection: firstAvail || null, affinity: "miss" };
+    const firstAvail = ordered.find((c) => !isOut(c));
+    return { connection: firstAvail || ordered.find((c) => !excluded?.has?.(c?.id)) || null, affinity: "miss" };
   }
 
   // Group into priority tiers, preserving stable order within each tier.
   const tiers = [];
   for (const c of ordered) {
-    const p = prio(c);
+    const p = (isDeprioritized(c) ? 1e9 : 0) + prio(c);
     const last = tiers[tiers.length - 1];
     if (!last || last.priority !== p) tiers.push({ priority: p, members: [c] });
     else last.members.push(c);
@@ -227,7 +230,7 @@ export function pickCacheAffine(connections, { cacheKey, excludeIds } = {}) {
   for (const tier of tiers) {
     const members = tier.members;
     if (members.length === 0) continue;
-    if (members.every((c) => isExcluded(c))) {
+    if (members.every((c) => isOut(c))) {
       // Whole tier excluded → fall through to the next tier.
       rotated = true;
       continue;
@@ -235,20 +238,23 @@ export function pickCacheAffine(connections, { cacheKey, excludeIds } = {}) {
 
     const bucket = fnv1a(cacheKey) % members.length;
     const primary = members[bucket];
-    if (!isExcluded(primary)) {
+    if (!isOut(primary)) {
       return { connection: primary, affinity: rotated ? "rotate" : "hit" };
     }
 
     for (let step = 1; step < members.length; step++) {
       const cand = members[(bucket + step) % members.length];
-      if (!isExcluded(cand)) return { connection: cand, affinity: "rotate" };
+      if (!isOut(cand)) return { connection: cand, affinity: "rotate" };
     }
 
     // Defensive: tier had a non-excluded member but the walk missed it.
     rotated = true;
   }
 
-  return { connection: null, affinity: "rotate" };
+  // Every clean account is out: fall back to any non-excluded account (even on
+  // cooldown) rather than hard-blocking the request.
+  const lastResort = ordered.find((c) => !(excluded && c && excluded.has(c.id))) || null;
+  return { connection: lastResort, affinity: "rotate" };
 }
 
 export function extractCacheKey(body) {

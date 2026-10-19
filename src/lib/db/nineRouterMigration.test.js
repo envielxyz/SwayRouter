@@ -11,7 +11,6 @@ function source(overrides = {}) {
   return {
     settings: {
       requireLogin: false,
-      providerStrategies: { "codebuddy-int": { strategy: "round-robin" } },
       fallbackStrategy: "least-inflight",
     },
     providerConnections: [],
@@ -163,7 +162,14 @@ describe("9Router migration planning", () => {
 
   test("only imports the routing subset and preserves security settings", () => {
     const result = buildNineRouterMigrationPlan(
-      source(),
+      source({
+        settings: {
+          requireLogin: false,
+          fallbackStrategy: "least-inflight",
+          stickyRoundRobinLimit: 2,
+          providerStrategies: { "codebuddy-int": { strategy: "round-robin", fallbackStrategy: "fill-first", stickyRoundRobinLimit: 4 } },
+        },
+      }),
       {
         providerAccounts: false,
         customProviders: false,
@@ -174,7 +180,8 @@ describe("9Router migration planning", () => {
       emptyCurrent,
     );
     expect(result.plan.settings.requireLogin).toBeUndefined();
-    expect(result.plan.settings.fallbackStrategy).toBe("fill-first");
+    expect(result.plan.settings.fallbackStrategy).toBeUndefined();
+    expect(result.plan.settings.stickyRoundRobinLimit).toBeUndefined();
     expect(result.plan.settings.providerStrategies["codebuddy-intl"]).toEqual({ strategy: "round-robin" });
   });
 
