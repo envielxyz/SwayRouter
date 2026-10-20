@@ -12,7 +12,7 @@ import {
   isModelLockActive,
   buildModelLockUpdate,
   getModelLockKey,
-  pickCacheAffine,
+  pickSticky,
   extractCacheKey,
   deriveCacheKey,
   sortWithDeprioritization,
@@ -182,24 +182,24 @@ describe("A4.2 per-model lock — no leak across models", () => {
   });
 });
 
-describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
+describe("A4.2 sticky routing — sticky → rotate-to-next", () => {
   test("deterministic: same key + same set always picks the same connection", () => {
     const conns = [
       { id: "a", priority: 1 },
       { id: "b", priority: 2 },
       { id: "c", priority: 3 },
     ] as any;
-    const p1 = pickCacheAffine(conns, { cacheKey: "prompt-prefix-A" });
-    const p2 = pickCacheAffine(conns, { cacheKey: "prompt-prefix-A" });
+    const p1 = pickSticky(conns, { cacheKey: "prompt-prefix-A" });
+    const p2 = pickSticky(conns, { cacheKey: "prompt-prefix-A" });
     expect(p1.connection?.id).toBe(p2.connection?.id);
 
-    const p3 = pickCacheAffine(conns, { cacheKey: "prompt-prefix-B" });
+    const p3 = pickSticky(conns, { cacheKey: "prompt-prefix-B" });
     expect(p3.connection).not.toBeNull();
   });
 
   test("no cacheKey → affinity=miss, deterministic by survivor set", () => {
     const conns = [{ id: "x" }, { id: "y" }] as any;
-    const r = pickCacheAffine(conns, {});
+    const r = pickSticky(conns, {});
     expect(r.affinity).toBe("miss");
     expect(r.connection?.id).toBe("x");
   });
@@ -207,9 +207,9 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
   test("sticky hit: primary bucket not excluded → stays (affinity=hit)", () => {
     const key = "stable-prefix";
     const conns = [{ id: "a" }, { id: "b" }, { id: "c" }] as any;
-    const first = pickCacheAffine(conns, { cacheKey: key });
+    const first = pickSticky(conns, { cacheKey: key });
 
-    const second = pickCacheAffine(conns, { cacheKey: key, excludeIds: new Set() });
+    const second = pickSticky(conns, { cacheKey: key, excludeIds: new Set() });
     expect(second.connection?.id).toBe(first.connection?.id);
     expect(second.affinity).toBe("hit");
   });
@@ -217,10 +217,10 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
   test("rotate-to-next: primary excluded → re-bucket against survivors (affinity=rotate)", () => {
     const key = "stable-prefix";
     const conns = [{ id: "a" }, { id: "b" }, { id: "c" }] as any;
-    const first = pickCacheAffine(conns, { cacheKey: key });
+    const first = pickSticky(conns, { cacheKey: key });
     const primaryId = first.connection!.id;
 
-    const rotated = pickCacheAffine(conns, { cacheKey: key, excludeIds: new Set([primaryId]) });
+    const rotated = pickSticky(conns, { cacheKey: key, excludeIds: new Set([primaryId]) });
     expect(rotated.affinity).toBe("rotate");
     expect(rotated.connection?.id).not.toBe(primaryId);
 
@@ -231,9 +231,9 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
 
     const conns = [{ id: "alpha" }, { id: "beta" }] as any;
     const key = "shared-prefix";
-    const first = pickCacheAffine(conns, { cacheKey: key });
+    const first = pickSticky(conns, { cacheKey: key });
     const primary = first.connection!.id;
-    const rotated = pickCacheAffine(conns, { cacheKey: key, excludeIds: new Set([primary]) });
+    const rotated = pickSticky(conns, { cacheKey: key, excludeIds: new Set([primary]) });
     const survivorId = rotated.connection!.id;
     expect(survivorId).not.toBe(primary);
     expect(survivorId).toBe(primary === "alpha" ? "beta" : "alpha");
@@ -241,7 +241,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
 
   test("all excluded → no connection", () => {
     const conns = [{ id: "a" }] as any;
-    const r = pickCacheAffine(conns, { cacheKey: "k", excludeIds: new Set(["a"]) });
+    const r = pickSticky(conns, { cacheKey: "k", excludeIds: new Set(["a"]) });
     expect(r.connection).toBeNull();
   });
 
@@ -252,7 +252,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
     ];
     // Sweep many keys: every one must land on the highest-priority tier ("free").
     for (const cacheKey of ["k-0", "k-1", "k-2", "k-3", "k-4", "k-5", "k-6", "k-7"]) {
-      const r = pickCacheAffine(conns, { cacheKey });
+      const r = pickSticky(conns, { cacheKey });
       expect(r.connection?.id).toBe("free");
       expect(r.affinity).toBe("hit");
     }
@@ -263,7 +263,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       { id: "free", priority: 1 },
       { id: "paid", priority: 2 },
     ];
-    const r = pickCacheAffine(conns, { cacheKey: "any-key", excludeIds: new Set(["free"]) });
+    const r = pickSticky(conns, { cacheKey: "any-key", excludeIds: new Set(["free"]) });
     expect(r.connection?.id).toBe("paid");
     expect(r.affinity).toBe("rotate");
   });
@@ -275,7 +275,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
     ];
     const picks = new Set<string | undefined>();
     for (let i = 0; i < 64 && picks.size < 2; i++) {
-      picks.add(pickCacheAffine(conns, { cacheKey: `spread-key-${i}` }).connection?.id);
+      picks.add(pickSticky(conns, { cacheKey: `spread-key-${i}` }).connection?.id);
     }
     expect(picks.size).toBe(2);
   });
@@ -286,9 +286,9 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       { id: "paid", priority: 2 },
       { id: "backup", priority: 3 },
     ];
-    const first = pickCacheAffine(conns, { cacheKey: "determinism-key" });
+    const first = pickSticky(conns, { cacheKey: "determinism-key" });
     for (let i = 0; i < 10; i++) {
-      const r = pickCacheAffine(conns, { cacheKey: "determinism-key" });
+      const r = pickSticky(conns, { cacheKey: "determinism-key" });
       expect(r.connection?.id).toBe(first.connection?.id);
       expect(r.affinity).toBe(first.affinity);
     }
@@ -299,7 +299,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       { id: "free", priority: 1 },
       { id: "paid", priority: 2 },
     ];
-    const r = pickCacheAffine(conns, { cacheKey: "k", excludeIds: new Set(["free", "paid"]) });
+    const r = pickSticky(conns, { cacheKey: "k", excludeIds: new Set(["free", "paid"]) });
     expect(r.connection).toBeNull();
     expect(r.affinity).toBe("rotate");
   });
@@ -312,7 +312,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       { id: "t2b", priority: 2 },
     ];
     for (const cacheKey of ["x-1", "x-2", "x-3", "x-4", "x-5"]) {
-      const r = pickCacheAffine(conns, { cacheKey, excludeIds: new Set(["t1a", "t1b"]) });
+      const r = pickSticky(conns, { cacheKey, excludeIds: new Set(["t1a", "t1b"]) });
       expect(["t2a", "t2b"]).toContain(r.connection?.id);
       expect(r.affinity).toBe("rotate");
     }
@@ -324,7 +324,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
       { id: "clean-low", priority: 9 },
     ];
     for (const cacheKey of ["d-0", "d-1", "d-2", "d-3", "d-4", "d-5", "d-6", "d-7"]) {
-      const r = pickCacheAffine(conns, { cacheKey });
+      const r = pickSticky(conns, { cacheKey });
       expect(r.connection?.id).toBe("clean-low");
       // Deprioritized accounts form their own lower tier, so the clean
       // account is the untouched primary of the top tier: a sticky hit.
@@ -336,7 +336,7 @@ describe("A4.2 cache-affine routing — sticky → rotate-to-next", () => {
     const conns: Array<{ id: string; priority: number; [DEPRIORITIZE_FIELD]?: number }> = [
       { id: "cooldown-only", priority: 1, [DEPRIORITIZE_FIELD]: now() + 60_000 },
     ];
-    const r = pickCacheAffine(conns, { cacheKey: "k" });
+    const r = pickSticky(conns, { cacheKey: "k" });
     expect(r.connection?.id).toBe("cooldown-only");
     expect(r.affinity).toBe("rotate");
   });

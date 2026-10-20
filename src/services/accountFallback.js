@@ -196,7 +196,7 @@ export function sortWithDeprioritization(connections) {
   return [...top, ...bottom];
 }
 
-export function pickCacheAffine(connections, { cacheKey, excludeIds } = {}) {
+export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
   const all = connections || [];
   if (all.length === 0) return { connection: null, affinity: "miss" };
   const excluded = excludeIds instanceof Set ? excludeIds : (excludeIds ? new Set(excludeIds) : null);
@@ -293,7 +293,7 @@ export function extractCacheKey(body) {
   return null;
 }
 
-// Resolve a stable cache-affine key for a request.
+// Resolve a stable sticky-routing key for a request.
 // Priority:
 //   (a) an EXPLICIT client-provided session/conversation identity (headers, or
 //       body prompt_cache_key / session_id / conversation_id / metadata.user_id).

@@ -258,7 +258,7 @@ function applyPendingRestore(m) {
 /** @type {Metric} */ let loginLockActive;
 /** @type {Metric} */ let traceSpansTotal;
 /** @type {Metric} */ let accountFallbackDecisionsTotal;
-/** @type {Metric} */ let cacheAffineSelectionsTotal;
+/** @type {Metric} */ let stickySelectionsTotal;
 /** @type {Metric} */ let clientDetectionsTotal;
 /** @type {Metric} */ let clientDetectionConflictsTotal;
 /** @type {Metric} */ let compatFallbackStripsTotal;
@@ -343,9 +343,9 @@ function registerStandardMetrics() {
     help: "Per-model account fallback decisions by tier (T1 rate-limit / T2 transient / T3 permanent)",
     labels: ["tier", "action"],
   });
-  cacheAffineSelectionsTotal = counter({
-    name: "sway_cache_affine_selections_total",
-    help: "Cache-affine routing outcomes (hit=sticky bucket kept, rotate=primary bucket locked→next, miss=no input key)",
+  stickySelectionsTotal = counter({
+    name: "sway_sticky_selections_total",
+    help: "Sticky routing outcomes (hit=sticky bucket kept, rotate=primary bucket locked→next, miss=no input key)",
     labels: ["result"],
   });
 
@@ -406,7 +406,7 @@ export {
   loginLockActive,
   traceSpansTotal,
   accountFallbackDecisionsTotal,
-  cacheAffineSelectionsTotal,
+  stickySelectionsTotal,
   clientDetectionsTotal,
   clientDetectionConflictsTotal,
   compatFallbackStripsTotal,

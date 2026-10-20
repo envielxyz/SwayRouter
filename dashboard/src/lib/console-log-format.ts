@@ -227,7 +227,7 @@ function formatAuth(message: string): string {
   if (match) return `${match[1].trim()} account availability: ${formatNumber(match[2])} of ${formatNumber(match[3])}`;
   match = message.match(/^([^|]+)\|\s*pinned to\s+([^\s]+)\s+\(([^)]+)\)/i);
   if (match) return `${match[1].trim()} is using account ${match[3]} (${match[2]})`;
-  match = message.match(/^([^|]+)\|\s*cache-affine\(([^)]+)\)\s+→\s+(.+)$/i);
+  match = message.match(/^([^|]+)\|\s*(?:sticky|cache-affine)\(([^)]+)\)\s+→\s+(.+)$/i);
   if (match) return `${match[1].trim()} selected a sticky account (${match[2]}) · ${match[3]}`;
   match = message.match(/^([^|]+)\|\s*all\s+(\d+)\s+accounts locked for\s+(.+?)\s+\(([^)]+)\)/i);
   if (match) return `${match[1].trim()}: all ${formatNumber(match[2])} accounts are locked for ${match[3]} · available ${match[4]}`;

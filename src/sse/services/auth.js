@@ -4,13 +4,13 @@ import {
   formatRetryAfter, isModelLockActive, buildModelLockUpdate,
   getEarliestModelLockUntil,
 
-  sortWithDeprioritization, pickCacheAffine,
+  sortWithDeprioritization, pickSticky,
   DEPRIORITIZE_FIELD,
 } from "../../services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS, classifyError, ERROR_TIERS, isQuotaExhaustionError } from "../../config/errorConfig.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { recordLock, clearLock } from "@/lib/db/repos/accountModelLocksRepo.js";
-import { accountFallbackDecisionsTotal, cacheAffineSelectionsTotal } from "@/observability/metrics.js";
+import { accountFallbackDecisionsTotal, stickySelectionsTotal } from "@/observability/metrics.js";
 import { resolveProviderId, NO_AUTH_PROVIDERS } from "@/providers/display.js";
 import {
   invalidateProviderAccountPool,
@@ -101,7 +101,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const poolConfig = resolveAccountPoolConfig(settings, providerOverride);
 
-    // Single routing path: priority-aware sticky (cache-affine). Legacy
+    // Single routing path: priority-aware sticky routing. Legacy
     // fallbackStrategy values are ignored; the picker already degrades to
     // priority order when no cache key exists.
     const connections = await getProviderConnectionsForRouting({ provider: providerId, isActive: true });
@@ -162,14 +162,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     } else {
       const cacheKey = deriveCacheKey(options);
-      const { connection: picked, affinity } = pickCacheAffine(rankedConnections, {
+      const { connection: picked, affinity } = pickSticky(rankedConnections, {
         cacheKey,
         excludeIds: excludeSet,
       });
       connection = picked || null;
-      try { cacheAffineSelectionsTotal.inc({ result: affinity || "miss" }); } catch {}
+      try { stickySelectionsTotal.inc({ result: affinity || "miss" }); } catch {}
       if (connection && cacheKey) {
-        log.debug("AUTH", `${provider} | cache-affine(${affinity}) → ${connection.id?.slice(0, 8)}`);
+        log.debug("AUTH", `${provider} | sticky(${affinity}) → ${connection.id?.slice(0, 8)}`);
       }
     }
 
