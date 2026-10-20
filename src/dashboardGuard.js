@@ -79,17 +79,33 @@ function isLoopbackHostname(h) {
 }
 
 export function isLocalRequest(request) {
-
   if (request.headers.get("x-swayrouter-via-proxy")) return false;
+
+  const host = request.headers.get("host");
+  const hostIsLoopback = isLoopbackHostname(host);
+  const origin = request.headers.get("origin");
+  let originIsLoopback = true;
+  if (origin) {
+    try {
+      originIsLoopback = isLoopbackHostname(new URL(origin).hostname);
+    } catch {
+      originIsLoopback = false;
+    }
+  }
+
+  // Docker Desktop forwards a host-local port through its bridge gateway, so
+  // the peer IP inside the container is not loopback. The loopback Host and
+  // Origin still identify a browser using the local dashboard entrypoint.
+  if (hostIsLoopback && originIsLoopback) return true;
 
   const realIp = request.headers.get("x-swayrouter-real-ip");
   if (realIp) {
     if (!isLoopbackHostname(realIp)) return false;
-  } else if (!isLoopbackHostname(request.headers.get("host"))) {
+  } else if (!hostIsLoopback) {
 
     return false;
   }
-  const origin = request.headers.get("origin");
+
   if (origin) {
     try {
       if (!isLoopbackHostname(new URL(origin).hostname)) return false;
