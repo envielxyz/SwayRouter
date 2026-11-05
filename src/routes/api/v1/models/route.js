@@ -3,6 +3,7 @@ import {
   getProviderAlias,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
+  resolveProviderId,
 } from "@/shared/constants/providers";
 import { getActiveProviderRows, getCombos, getCustomModels } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
@@ -222,7 +223,7 @@ async function fetchCompatibleModelIds(connection) {
 }
 
 function providerMatchesKinds(_providerId, kindFilter) {
-  return kindFilter.includes(LLM_KIND);
+  return kindFilter.includes(LLM_KIND) || kindFilter.includes("tts") || kindFilter.includes("stt");
 }
 
 function comboMatchesKinds(combo, kindFilter) {
@@ -261,7 +262,40 @@ export async function buildModelsList(kindFilter, options = {}) {
   } catch (e) {
     console.log("Could not fetch disabled models");
   }
-  const isDisabled = (alias, modelId) => Array.isArray(disabledByAlias[alias]) && disabledByAlias[alias].includes(modelId);
+  const isDisabled = (alias, modelId, providerId = null) => {
+    if (!modelId) return false;
+    const cleanId = String(modelId).trim().toLowerCase();
+    const bareId = cleanId.includes("/") ? cleanId.split("/").pop() : cleanId;
+
+    const aliasesToCheck = new Set(
+      [
+        alias,
+        providerId,
+        providerId ? resolveProviderId(providerId) : null,
+        alias ? resolveProviderId(alias) : null,
+        providerId ? getProviderAlias(providerId) : null,
+        alias ? getProviderAlias(alias) : null,
+      ]
+        .filter(Boolean)
+        .map((a) => String(a).trim().toLowerCase())
+    );
+
+    for (const a of aliasesToCheck) {
+      for (const [key, list] of Object.entries(disabledByAlias)) {
+        const cleanKey = String(key).trim().toLowerCase();
+        if (cleanKey === a && Array.isArray(list)) {
+          for (const item of list) {
+            const cleanItem = String(item).trim().toLowerCase();
+            const bareItem = cleanItem.includes("/") ? cleanItem.split("/").pop() : cleanItem;
+            if (cleanItem === cleanId || bareItem === bareId) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
@@ -373,7 +407,7 @@ export async function buildModelsList(kindFilter, options = {}) {
       for (const modelId of mergedModelIds) {
 
         if (!kindFilter.includes(LLM_KIND)) continue;
-        if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
+        if (isDisabled(outputAlias, modelId, providerId) || isDisabled(staticAlias, modelId, providerId)) continue;
 
         const normalizedModelId = typeof modelId === "string"
           ? modelId.replace(/^(?:clinepass|cline-pass)\//, "")
@@ -429,7 +463,10 @@ export async function OPTIONS() {
 export async function GET(request) {
   try {
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
-    const data = await buildModelsList([LLM_KIND], { skipDynamicFetch });
+    const url = new URL(request.url);
+    const kindParam = url.searchParams.get("kind");
+    const kinds = kindParam ? kindParam.split(",") : [LLM_KIND, "tts", "stt"];
+    const data = await buildModelsList(kinds, { skipDynamicFetch });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

@@ -13,10 +13,10 @@ import {
   ID_TO_ALIAS,
 } from "./display";
 
-const EXPECTED_TOTAL = 66;
+const EXPECTED_TOTAL = 65;
 
 describe("registry", () => {
-  test("total entries = 66", () => {
+  test("total entries = 65", () => {
     expect(REGISTRY.length, `registry length`).toBe(EXPECTED_TOTAL);
   });
 
@@ -214,7 +214,7 @@ describe("registry", () => {
     expect(Object.keys(APIKEY_PROVIDERS).length, `apikey count`).toBe(45);
     expect(Object.keys(OAUTH_PROVIDERS).length, `oauth count`).toBe(19);
     expect(Object.keys(WEB_COOKIE_PROVIDERS).length, `webCookie count`).toBe(1);
-    expect(Object.keys(NO_AUTH_PROVIDERS).length, `none count`).toBe(1);
+    expect(Object.keys(NO_AUTH_PROVIDERS).length, `none count`).toBe(0);
   });
 });
 

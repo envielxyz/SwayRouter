@@ -7,6 +7,7 @@ import { getProviderModels, PROVIDER_ID_TO_ALIAS } from "open-sse/config/provide
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { RUNTIME_CONFIG } from "@/shared/constants/config";
 import { pingModelByKind } from "@/routes/api/models/test/ping";
+import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 function normalizedProviderAlias(value) {
   return String(value || "").trim().toLowerCase();
@@ -101,20 +102,6 @@ export async function POST(request, { params }) {
 
     const baseUrl = `http://127.0.0.1:${process.env.PORT || RUNTIME_CONFIG.appPort}`;
 
-    if (usesDynamicCatalog && models.length === 0) {
-      try {
-        const modelsRes = await fetch(`${baseUrl}/api/providers/${id}/models?refresh=1`);
-        if (modelsRes.ok) {
-          const data = await modelsRes.json();
-          models = (data.models || []).map((m) => ({ id: m.id || m.name, name: m.name || m.id }));
-        }
-      } catch {                         }
-    }
-
-    if (models.length === 0 && usesDynamicCatalog && requestedModel) {
-      models = [{ id: requestedModel, name: requestedModel, kind: "llm" }];
-    }
-
     const routeModel = (modelId) => {
       const value = String(modelId || "");
 
@@ -124,6 +111,28 @@ export async function POST(request, { params }) {
       }
       return value.startsWith(`${alias}/`) ? value : `${alias}/${value}`;
     };
+
+    if (usesDynamicCatalog && models.length === 0) {
+      try {
+        const cliToken = await getConsistentMachineId("swayrouter-cli-auth");
+        const modelsRes = await fetch(`${baseUrl}/api/providers/${id}/models?refresh=1`, {
+          headers: { "x-swayrouter-cli-token": cliToken },
+        });
+        if (modelsRes.ok) {
+          const data = await modelsRes.json();
+          models = (data.models || []).map((m) => ({
+            ...m,
+            id: m.id || m.name,
+            name: m.name || m.id,
+            kind: m.kind || m.type || "llm",
+          }));
+        }
+      } catch {                         }
+    }
+
+    if (requestedModel && !models.some((m) => m.id === requestedModel || routeModel(m.id) === requestedModel)) {
+      models.push({ id: requestedModel, name: requestedModel, kind: "llm" });
+    }
 
     let customModels = [];
     try {
@@ -205,6 +214,7 @@ export async function POST(request, { params }) {
       results,
     });
   } catch (error) {
+    console.error("[ProviderModelsTest] CRASH:", error);
     logRouteError("ProviderModelsTest", error);
     return NextResponse.json({ error: MODEL_TEST_ERROR }, { status: 500 });
   }

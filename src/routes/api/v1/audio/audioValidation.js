@@ -10,7 +10,7 @@ export const SUPPORTED_TRANSCRIPTION_FORMATS = new Set([
 ]);
 
 export const SUPPORTED_AUDIO_EXTENSIONS = new Set([
-  "mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm", "ogg", "flac"
+  "mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm", "ogg", "flac", "pcm"
 ]);
 
 export function validateSpeechBody(body) {

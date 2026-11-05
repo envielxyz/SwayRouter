@@ -2,7 +2,7 @@ import { getActiveApiKey } from "@/lib/localDb";
 import { RUNTIME_CONFIG } from "@/shared/constants/config";
 import { MODEL_TEST_TIMEOUT_MS } from "@/config/runtimeConfig.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-
+import { callAudioSpeech, callAudioTranscription } from "@/routes/api/v1/audio/audioService.js";
 const CLI_TOKEN_SALT = "swayrouter-cli-auth";
 
 async function getInternalHeaders() {
@@ -84,12 +84,12 @@ export async function pingModelByKind(
   }
   if (options.stream === true) headers.Accept = "text/event-stream";
   const start = Date.now();
-  if (kind !== "llm" && kind !== undefined && kind !== null) {
+  if (kind !== "llm" && kind !== "tts" && kind !== "stt" && kind !== undefined && kind !== null) {
     return {
       ok: false,
       latencyMs: 0,
       status: 404,
-      error: `Model kind "${kind}" is not supported — Sway Router is LLM-pure`,
+      error: `Model kind "${kind}" is not supported`,
     };
   }
 
@@ -110,6 +110,44 @@ export async function pingModelByKind(
   let rawText = "";
   const useStream = options.stream === true;
   try {
+    if (kind === "tts") {
+      res = await callAudioSpeech({ model, input: "ping" }, { signal });
+      const latencyMs = Date.now() - start;
+      clearTimeout(timeoutTimer);
+      if (res.ok) {
+        return { ok: true, latencyMs, status: res.status, error: null };
+      }
+      let errDetail = `HTTP ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson?.error?.message || errJson?.error) {
+          errDetail = `${errDetail}: ${errJson.error.message || errJson.error}`;
+        }
+      } catch {}
+      return { ok: false, latencyMs, status: res.status, error: errDetail };
+    }
+
+    if (kind === "stt") {
+      const form = new FormData();
+      const wav = Buffer.from("524946462c00000057415645666d74201000000001000100803e0000007d00000200100064617461080000000000000000000000", "hex");
+      form.append("file", new Blob([wav], { type: "audio/wav" }), "test.wav");
+      form.append("model", model);
+      res = await callAudioTranscription(form, { signal });
+      const latencyMs = Date.now() - start;
+      clearTimeout(timeoutTimer);
+      if (res.ok) {
+        return { ok: true, latencyMs, status: res.status, error: null };
+      }
+      let errDetail = `HTTP ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson?.error?.message || errJson?.error) {
+          errDetail = `${errDetail}: ${errJson.error.message || errJson.error}`;
+        }
+      } catch {}
+      return { ok: false, latencyMs, status: res.status, error: errDetail };
+    }
+
     res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
       method: "POST",
       headers,
@@ -124,6 +162,7 @@ export async function pingModelByKind(
 
     rawText = await res.text();
   } catch (error) {
+    console.error("[pingModelByKind] catch error:", error);
     const callerAborted = callerSignal?.aborted === true;
     const timedOut = timeoutController.signal.aborted && !callerAborted;
     if (callerAborted) throw error;
