@@ -95,6 +95,9 @@ export const ROUTE_LOADERS = {
   "api/usage/stats/route.js": () => import("./api/usage/stats/route.js"),
   "api/usage/stream/route.js": () => import("./api/usage/stream/route.js"),
   "api/v1/api/chat/route.js": () => import("./api/v1/api/chat/route.js"),
+  "api/v1/audio/speech/route.js": () => import("./api/v1/audio/speech/route.js"),
+  "api/v1/audio/transcriptions/route.js": () => import("./api/v1/audio/transcriptions/route.js"),
+  "api/v1/audio/translations/route.js": () => import("./api/v1/audio/translations/route.js"),
   "api/v1/chat/completions/route.js": () => import("./api/v1/chat/completions/route.js"),
   "api/v1/images/edits/route.js": () => import("./api/v1/images/edits/route.js"),
   "api/v1/images/generations/route.js": () => import("./api/v1/images/generations/route.js"),
@@ -679,6 +682,24 @@ export const ROUTE_TABLE = [
   },
   {
     "method": "OPTIONS",
+    "pathPattern": "/api/v1/audio/speech",
+    "file": "api/v1/audio/speech/route.js",
+    "params": []
+  },
+  {
+    "method": "OPTIONS",
+    "pathPattern": "/api/v1/audio/transcriptions",
+    "file": "api/v1/audio/transcriptions/route.js",
+    "params": []
+  },
+  {
+    "method": "OPTIONS",
+    "pathPattern": "/api/v1/audio/translations",
+    "file": "api/v1/audio/translations/route.js",
+    "params": []
+  },
+  {
+    "method": "OPTIONS",
     "pathPattern": "/api/v1/chat/completions",
     "file": "api/v1/chat/completions/route.js",
     "params": []
@@ -1048,6 +1069,24 @@ export const ROUTE_TABLE = [
     "method": "POST",
     "pathPattern": "/api/v1/api/chat",
     "file": "api/v1/api/chat/route.js",
+    "params": []
+  },
+  {
+    "method": "POST",
+    "pathPattern": "/api/v1/audio/speech",
+    "file": "api/v1/audio/speech/route.js",
+    "params": []
+  },
+  {
+    "method": "POST",
+    "pathPattern": "/api/v1/audio/transcriptions",
+    "file": "api/v1/audio/transcriptions/route.js",
+    "params": []
+  },
+  {
+    "method": "POST",
+    "pathPattern": "/api/v1/audio/translations",
+    "file": "api/v1/audio/translations/route.js",
     "params": []
   },
   {
