@@ -145,6 +145,15 @@ describe("A4.2 classifyError — 3-tier T1/T2/T3", () => {
     expect(rt.tier).toBe(ERROR_TIERS.T3);
   });
 
+  test("402 payment required / credit exhaustion gets short cooldown without 2-minute lock", () => {
+    const r402 = classifyError(402, "the organization has insufficient credit", 0);
+    expect(r402.tier).toBe(ERROR_TIERS.T1);
+    expect(r402.action).toBe("cooldown");
+    expect(r402.cooldownMs).toBeLessThanOrEqual(10 * 1000);
+    expect(r402.cooldownMs).toBeGreaterThanOrEqual(6 * 1000);
+    expect(r402.deprioitizeUntil).toBeUndefined();
+  });
+
   test("isDeprioitized respects the window boundary", () => {
     expect(isDeprioitized(now() + 60_000)).toBe(true);
     expect(isDeprioitized(now() - 1)).toBe(false);

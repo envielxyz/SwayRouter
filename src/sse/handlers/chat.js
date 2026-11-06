@@ -337,7 +337,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
+        let status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
+        if (status === 402) status = HTTP_STATUS.RATE_LIMITED;
         const retryMessage = "All provider accounts are temporarily unavailable";
         log.warn("CHAT", `[${provider}/${model}] ${lastError || credentials.lastError || "Unavailable"} (${credentials.retryAfterHuman})`);
         return unavailableResponse(status, retryMessage, credentials.retryAfter, credentials.retryAfterHuman);
@@ -347,7 +348,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         return errorResponse(HTTP_STATUS.NOT_FOUND, "No active credentials available");
       }
       log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, "All provider accounts are unavailable");
+      let status = lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE;
+      if (status === 402) status = HTTP_STATUS.RATE_LIMITED;
+      return errorResponse(status, "All provider accounts are unavailable");
     }
 
     if (credentials.allBusy) {

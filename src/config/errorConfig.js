@@ -61,12 +61,12 @@ export function isCancellationStatus(status) {
 }
 
 const QUOTA_EXHAUSTION_PATTERNS = [
-  /\binsufficient[_\s-]+quota\b/i,
-  /\b(?:quota|resource)[\s_-]+(?:is[\s_-]+)?(?:exhausted|depleted)\b/i,
-  /\b(?:quota|resource)[\s_-]+(?:has[\s_-]+been[\s_-]+)?(?:exceeded|reached)\b/i,
-  /\b(?:exceeded|exhausted|depleted)\s+(?:(?:your|the)\s+)?(?:current\s+)?(?:quota|resource)\b/i,
-  /\b(?:daily|weekly|monthly)\s+(?:usage\s+)?(?:quota|limit)\s+(?:is\s+)?(?:exceeded|exhausted|reached)\b/i,
-  /\bno\s+(?:remaining\s+)?quota\b/i,
+  /\binsufficient[_\s-]+(?:quota|credit|balance)\b/i,
+  /\b(?:quota|resource|credit|balance)[\s_-]+(?:is[\s_-]+)?(?:exhausted|depleted)\b/i,
+  /\b(?:quota|resource|credit|balance)[\s_-]+(?:has[\s_-]+been[\s_-]+)?(?:exceeded|reached)\b/i,
+  /\b(?:exceeded|exhausted|depleted)\s+(?:(?:your|the)\s+)?(?:current\s+)?(?:quota|resource|credit|balance)\b/i,
+  /\b(?:daily|weekly|monthly)\s+(?:usage\s+)?(?:quota|limit|credit)\s+(?:is\s+)?(?:exceeded|exhausted|reached)\b/i,
+  /\bno\s+(?:remaining\s+)?(?:quota|credit|balance)\b/i,
 ];
 
 export function isQuotaExhaustionError(errorText) {
@@ -93,7 +93,7 @@ export const ERROR_RULES = [
   { text: "overloaded",               backoff: true },
 
   { status: 401, cooldownMs: COOLDOWN.long },
-  { status: 402, cooldownMs: COOLDOWN.long },
+  { status: 402, cooldownMs: 8 * 1000 },
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
   { status: 429, backoff: true },
@@ -101,7 +101,7 @@ export const ERROR_RULES = [
 
 export const COOLDOWN_MS = {
   unauthorized: COOLDOWN.long,
-  paymentRequired: COOLDOWN.long,
+  paymentRequired: 8 * 1000,
   notFound: COOLDOWN.long,
   transient: TRANSIENT_COOLDOWN_MS,
   requestNotAllowed: COOLDOWN.short,
@@ -112,6 +112,16 @@ export function classifyError(status, errorText, retryCount = 0, opts = {}) {
     ? (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase()
     : "";
   const rng = typeof opts.rng === "function" ? opts.rng : null;
+
+  const is402 = Number(status) === 402 || lowerError.includes("payment required") || lowerError.includes("insufficient credit");
+  if (is402) {
+    const jitter = rng ? Math.floor(rng() * 2000 * JITTER_FRACTION) : 0;
+    return {
+      tier: ERROR_TIERS.T1,
+      action: "cooldown",
+      cooldownMs: 8000 + jitter,
+    };
+  }
 
   const quotaExhausted = isQuotaExhaustionError(lowerError);
   if (quotaExhausted || Number(status) === 429) {
@@ -139,7 +149,7 @@ export function classifyError(status, errorText, retryCount = 0, opts = {}) {
 
   const t3Texts = ["no credentials", "request not allowed", "improperly formed request"];
   const t3ByText = t3Texts.some((t) => lowerError.includes(t));
-  const t3ByStatus = [401, 402, 403, 404, 406].includes(Number(status));
+  const t3ByStatus = [401, 403, 404, 406].includes(Number(status));
   if (t3ByStatus || t3ByText) {
     const jitter = rng ? Math.floor(rng() * COOLDOWN.long * JITTER_FRACTION) : 0;
     return {
