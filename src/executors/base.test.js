@@ -57,6 +57,36 @@ describe("BaseExecutor retry and cancellation", () => {
     delete globalThis.__baseExecutorFetch;
   });
 
+  test("retries 429 responses using dynamic Retry-After header", async () => {
+    fetchCalls.length = 0;
+    let calls = 0;
+    globalThis.__baseExecutorFetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        });
+      }
+      return response(200);
+    };
+    const executor = new BaseExecutor("test", {
+      baseUrl: "https://provider.test/chat",
+    });
+    // Override computeRetryDelay to return 5ms so test runs fast
+    executor.computeRetryDelay = async () => 5;
+
+    const result = await executor.execute({
+      model: "test-model",
+      body: { model: "test-model" },
+      stream: false,
+      credentials: {},
+    });
+
+    expect(result.response.status).toBe(200);
+    expect(fetchCalls).toHaveLength(2);
+    delete globalThis.__baseExecutorFetch;
+  });
   test("cancels discarded response bodies before retrying", async () => {
     let calls = 0;
     let cancelled = 0;

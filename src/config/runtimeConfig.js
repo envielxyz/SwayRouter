@@ -64,7 +64,7 @@ export const RETRY_CONFIG = {
 export const DEFAULT_RETRY_CONFIG = {
 
   500: { attempts: 2, delayMs: 2000 },
-  429: { attempts: 0, delayMs: 0 },
+  429: { attempts: 1, delayMs: 1500 },
   502: { attempts: 3, delayMs: 3000 },
   503: { attempts: 3, delayMs: 2000 },
   504: { attempts: 2, delayMs: 3000 }

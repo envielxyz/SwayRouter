@@ -6,6 +6,7 @@ import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { env } from "@/lib/env";
 import { createUpstreamAttemptSignal } from "../utils/upstreamTimeout.js";
+import { parseResetTimestamp } from "../utils/error.js";
 
 export function waitForRetry(delayMs, signal) {
   if (!delayMs || delayMs <= 0) {
@@ -123,6 +124,28 @@ export class BaseExecutor {
 
   parseError(response, bodyText) {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
+  }
+
+  async computeRetryDelay(response, attempt, defaultDelayMs = 1500) {
+    if (!response || response.status !== HTTP_STATUS.RATE_LIMITED) {
+      return defaultDelayMs;
+    }
+    const headers = response.headers;
+    const retryAfter =
+      headers?.get?.("retry-after") ||
+      headers?.get?.("x-ratelimit-reset-requests") ||
+      headers?.get?.("x-ratelimit-reset");
+    if (retryAfter) {
+      const parsedMs = parseResetTimestamp(retryAfter);
+      if (parsedMs && parsedMs > Date.now()) {
+        const deltaMs = parsedMs - Date.now();
+        if (deltaMs <= 5000) {
+          return Math.max(1000, deltaMs + 200);
+        }
+        return false;
+      }
+    }
+    return defaultDelayMs;
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestTag = "", attemptReason = "initial", maxTotalAttempts = env.upstreamMaxAttempts, attemptTimeoutMs = env.upstreamAttemptTimeoutMs, deadlineAt = null }) {
