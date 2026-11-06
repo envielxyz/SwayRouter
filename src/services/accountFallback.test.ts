@@ -340,6 +340,19 @@ describe("A4.2 sticky routing — sticky → rotate-to-next", () => {
     expect(r.connection?.id).toBe("cooldown-only");
     expect(r.affinity).toBe("rotate");
   });
+
+  test("when all accounts are deprioritized, sticky hashing still distributes across them", () => {
+    const conns: Array<{ id: string; priority: number; [DEPRIORITIZE_FIELD]?: number }> = [
+      { id: "deprio-1", priority: 1, [DEPRIORITIZE_FIELD]: now() + 60_000 },
+      { id: "deprio-2", priority: 1, [DEPRIORITIZE_FIELD]: now() + 60_000 },
+    ];
+    const picks = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const r = pickSticky(conns, { cacheKey: `spread-deprio-${i}` });
+      if (r.connection?.id) picks.add(r.connection.id);
+    }
+    expect(picks.size).toBe(2);
+  });
 });
 
 describe("A4.2 extractCacheKey — format-agnostic", () => {

@@ -200,7 +200,7 @@ export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
   const all = connections || [];
   if (all.length === 0) return { connection: null, affinity: "miss" };
   const excluded = excludeIds instanceof Set ? excludeIds : (excludeIds ? new Set(excludeIds) : null);
-  const isOut = (c) => !!(excluded && c && excluded.has(c.id)) || isDeprioritized(c);
+  const isExcluded = (c) => !!(excluded && c && excluded.has(c.id));
   const prio = (c) => (c && c.priority != null ? c.priority : 999);
 
   // Stable copy ordered by ascending priority (lower number = higher priority).
@@ -211,8 +211,8 @@ export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
   });
 
   if (!cacheKey) {
-    const firstAvail = ordered.find((c) => !isOut(c));
-    return { connection: firstAvail || ordered.find((c) => !excluded?.has?.(c?.id)) || null, affinity: "miss" };
+    const firstAvail = ordered.find((c) => !isExcluded(c) && !isDeprioritized(c));
+    return { connection: firstAvail || ordered.find((c) => !isExcluded(c)) || null, affinity: "miss" };
   }
 
   // Group into priority tiers, preserving stable order within each tier.
@@ -230,7 +230,7 @@ export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
   for (const tier of tiers) {
     const members = tier.members;
     if (members.length === 0) continue;
-    if (members.every((c) => isOut(c))) {
+    if (members.every((c) => isExcluded(c))) {
       // Whole tier excluded → fall through to the next tier.
       rotated = true;
       continue;
@@ -238,13 +238,14 @@ export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
 
     const bucket = fnv1a(cacheKey) % members.length;
     const primary = members[bucket];
-    if (!isOut(primary)) {
-      return { connection: primary, affinity: rotated ? "rotate" : "hit" };
+    if (!isExcluded(primary)) {
+      const hitAffinity = (tier.priority >= 1e9 || rotated) ? "rotate" : "hit";
+      return { connection: primary, affinity: hitAffinity };
     }
 
     for (let step = 1; step < members.length; step++) {
       const cand = members[(bucket + step) % members.length];
-      if (!isOut(cand)) return { connection: cand, affinity: "rotate" };
+      if (!isExcluded(cand)) return { connection: cand, affinity: "rotate" };
     }
 
     // Defensive: tier had a non-excluded member but the walk missed it.
@@ -253,7 +254,7 @@ export function pickSticky(connections, { cacheKey, excludeIds } = {}) {
 
   // Every clean account is out: fall back to any non-excluded account (even on
   // cooldown) rather than hard-blocking the request.
-  const lastResort = ordered.find((c) => !(excluded && c && excluded.has(c.id))) || null;
+  const lastResort = ordered.find((c) => !isExcluded(c)) || null;
   return { connection: lastResort, affinity: "rotate" };
 }
 
