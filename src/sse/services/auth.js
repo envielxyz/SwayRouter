@@ -318,7 +318,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     tier = ERROR_TIERS.T1;
     action = "cooldown";
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
-    cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+    cooldownMs = Math.max(1500, Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS));
     tier = ERROR_TIERS.T1;
     action = "cooldown";
   } else {

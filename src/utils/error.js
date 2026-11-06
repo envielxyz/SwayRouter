@@ -31,6 +31,81 @@ export async function writeStreamError(writer, statusCode, message) {
   await writer.write(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
 }
 
+export function parseResetTimestamp(headerValue) {
+  if (!headerValue || typeof headerValue !== "string") return null;
+  const str = headerValue.trim();
+  if (!str) return null;
+
+  if (/^\d+(?:\.\d+)?\s*s$/i.test(str)) {
+    const sec = parseFloat(str);
+    if (Number.isFinite(sec) && sec > 0) return Date.now() + Math.round(sec * 1000);
+  }
+  if (/^\d+\s*ms$/i.test(str)) {
+    const ms = parseInt(str, 10);
+    if (Number.isFinite(ms) && ms > 0) return Date.now() + ms;
+  }
+  if (/^\d+(?:\.\d+)?$/.test(str)) {
+    const val = parseFloat(str);
+    if (!Number.isFinite(val) || val <= 0) return null;
+    if (val > 1e9 && val < 1e11) {
+      const ms = Math.round(val * 1000);
+      return ms > Date.now() ? ms : null;
+    }
+    if (val >= 1e12) {
+      return val > Date.now() ? Math.round(val) : null;
+    }
+    return Date.now() + Math.round(val * 1000);
+  }
+
+  const parsedDate = Date.parse(str);
+  if (Number.isFinite(parsedDate) && parsedDate > Date.now()) {
+    return parsedDate;
+  }
+
+  return null;
+}
+
+export function extractRateLimitReset(response, bodyText = "") {
+  const headers = response?.headers;
+  if (headers && typeof headers.get === "function") {
+    const retryAfter = headers.get("retry-after");
+    if (retryAfter) {
+      const ts = parseResetTimestamp(retryAfter);
+      if (ts) return ts;
+    }
+
+    const xReset =
+      headers.get("x-ratelimit-reset") ||
+      headers.get("x-ratelimit-reset-requests") ||
+      headers.get("x-ratelimit-reset-tokens");
+    if (xReset) {
+      const ts = parseResetTimestamp(xReset);
+      if (ts) return ts;
+    }
+  }
+
+  if (bodyText && typeof bodyText === "string") {
+    try {
+      const json = JSON.parse(bodyText);
+      const err = json?.error || json;
+      if (typeof err === "object" && err !== null) {
+        if (typeof err.resets_at === "number" && err.resets_at > 0) {
+          const ms = err.resets_at > 1e11 ? err.resets_at : err.resets_at * 1000;
+          if (ms > Date.now()) return ms;
+        }
+        if (typeof err.resets_in_seconds === "number" && err.resets_in_seconds > 0) {
+          return Date.now() + Math.round(err.resets_in_seconds * 1000);
+        }
+        if (typeof err.retry_after === "number" && err.retry_after > 0) {
+          return Date.now() + Math.round(err.retry_after * 1000);
+        }
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
 export async function parseUpstreamError(response, executor = null) {
   let bodyText = "";
   try {
@@ -39,24 +114,29 @@ export async function parseUpstreamError(response, executor = null) {
     bodyText = "";
   }
 
+  let statusCode = response?.status || 500;
+  let message = DEFAULT_ERROR_MESSAGES[statusCode] || "Upstream provider request failed";
+  let resetsAtMs = extractRateLimitReset(response, bodyText);
+
   if (executor && typeof executor.parseError === "function") {
     try {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
-        return {
-          statusCode: parsed.status || response.status,
-          message: ["codebuddy-cn", "codebuddy-intl"].includes(executor?.provider) && parsed.message
-            ? parsed.message
-            : DEFAULT_ERROR_MESSAGES[response.status] || "Upstream provider request failed",
-          resetsAtMs: parsed.resetsAtMs,
-        };
+        if (parsed.status) statusCode = parsed.status;
+        if (["codebuddy-cn", "codebuddy-intl"].includes(executor?.provider) && parsed.message) {
+          message = parsed.message;
+        } else if (parsed.message) {
+          message = parsed.message;
+        }
+        if (parsed.resetsAtMs) resetsAtMs = parsed.resetsAtMs;
       }
-    } catch {                                       }
+    } catch {}
   }
 
   return {
-    statusCode: response.status,
-    message: DEFAULT_ERROR_MESSAGES[response.status] || "Upstream provider request failed",
+    statusCode,
+    message,
+    resetsAtMs,
   };
 }
 
