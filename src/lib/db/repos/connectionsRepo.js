@@ -312,14 +312,7 @@ export async function createProviderConnection(data) {
     }
     let connectionPriority = data.priority;
     if (connectionPriority === undefined || connectionPriority === null) {
-
-      connectionPriority = gapPriorityBelow(
-        all,
-        all.reduce((m, c) => {
-          const p = Number(c.priority) || 0;
-          return p > m ? p : m;
-        }, 0)
-      );
+      connectionPriority = 1024;
     }
 
     const conn = {

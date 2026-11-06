@@ -1314,15 +1314,17 @@ export default function Provider() {
     if (idx < 0) return;
     const j = idx + dir;
     if (j < 0 || j >= conns.length) return;
-    const a = conns[idx];
-    const b = conns[j];
-    const pa = a.priority ?? (idx + 1) * 10;
-    const pb = b.priority ?? (j + 1) * 10;
 
-    await Promise.all([
-      updateConnection(a.id, { priority: pb }),
-      updateConnection(b.id, { priority: pa }),
-    ]);
+    const reordered = [...conns];
+    const temp = reordered[idx];
+    reordered[idx] = reordered[j];
+    reordered[j] = temp;
+
+    await Promise.all(
+      reordered.map((c, index) =>
+        updateConnection(c.id, { priority: (index + 1) * 1024 })
+      )
+    );
     void qc.invalidateQueries({ queryKey: ["connections"] });
   }
 
